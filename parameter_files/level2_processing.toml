@@ -1,0 +1,79 @@
+[Master] 
+
+log_file = 'logs/{}_main_run.log'
+
+sql_database = 'databases/COMAP_manchester.db'
+
+pipeline = ['modules.ProcessLevel2.CreateLevel2File.CreateLevel2File.CreateLevel2File()',
+            'modules.ProcessLevel2.SystemTemperature.SystemTemperature.SystemTemperature()',
+            'modules.ProcessLevel2.FindScans.FindScans.FindScans()',
+            'modules.ProcessLevel2.NoiseStats.NoiseStats.NoiseStatsLevel1()',
+            'modules.ProcessLevel2.Atmosphere.Atmosphere.AtmosphereInObservation()',
+            'modules.ProcessLevel2.GainFilterAndBin.GainFilterAndBin.GainFilterAndBin()',
+            'modules.ProcessLevel2.NoiseStats.NoiseStats.NoiseStatsLevel2()']
+
+# pipeline = ['modules.ProcessLevel2.SystemTemperature.SystemTemperature.SystemTemperature()']
+
+#pipeline = ['modules.ProcessLevel2.NoiseStats.NoiseStats.NoiseStatsLevel2()']
+    #'modules.ProcessLevel2.GainFilterAndBin.GainFilterAndBin.GainFilterAndBin()']
+
+nprocess = 6
+
+source_group = 'Galactic'
+
+[modules.ProcessLevel2.FindScans.FindScans.FindScans]
+
+plot = true
+
+[modules.ProcessLevel2.Atmosphere.Atmosphere.AtmosphereInObservation]
+
+plot = true
+
+[modules.ProcessLevel2.NoiseStats.NoiseStats.NoiseStatsLevel1]
+
+plot = true 
+
+[modules.ProcessLevel2.NoiseStats.NoiseStats.NoiseStatsLevel2]
+
+plot = true
+
+[modules.ProcessLevel2.SystemTemperature.SystemTemperature.SystemTemperature]
+
+plot_vane = false 
+plot_tsys = true 
+plot_dir = 'outputs/plots/SystemTemperature/'
+overwrite = true
+
+[modules.ProcessLevel2.CreateLevel2File.CreateLevel2File.CreateLevel2File]
+
+output_dir = '/scratch/nas_core2/sharper/COMAP/level2_data_2024/'
+
+save_dir_structure = '%Y-%m/{source}/level2/'
+
+# Copy this level1 data to the level 2 file
+level1_attributes = ['comap']
+level1_datasets = [['/spectrometer/MJD','1'],
+                ['/spectrometer/bands','1'],
+                ['/spectrometer/frequency','1'],
+                ['/spectrometer/feeds','1'],
+                ['/spectrometer/pixel_pointing/pixel_az','1'],
+                ['/spectrometer/pixel_pointing/pixel_el','1'],
+                ['/spectrometer/pixel_pointing/pixel_ra','1'],
+                ['/spectrometer/pixel_pointing/pixel_dec','1'],
+                ['/spectrometer/pixel_pointing/pixel_xoffset','1'],
+                ['/spectrometer/pixel_pointing/pixel_yoffset','1'],
+                ['/hk/antenna0/vane/Tvane','0.01'],
+                    ['/hk/antenna0/vane/angle','0.01'],
+                    ['/hk/antenna0/vane/Tambient','0.01'],
+                    ['/hk/antenna0/vane/Tshroud','0.01'],
+                    ['/hk/antenna0/vane/utc', '1'],
+                    ['/hk/array/frame/features','1'],
+                    ['/hk/array/weather/airTemperature','0.01'],
+                    ['/hk/array/weather/pressure','0.01'], 
+                    ['/hk/array/weather/dewPointTemp','0.01'],
+                    ['/hk/array/weather/windSpeed','0.01'],
+                    ['/hk/array/weather/windDirection','0.01']]
+
+[modules.ProcessLevel2.GainFilterAndBin.GainFilterAndBin.GainFilterAndBin]
+
+n_freq_bin = 2

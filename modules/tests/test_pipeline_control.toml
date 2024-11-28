@@ -1,0 +1,10 @@
+[Master] 
+
+log_file = 'modules/tests/logs/test_pipeline_control.log'
+
+pipeline = ['tests.MockModule.MockModule()'] 
+
+
+[tests.MockModule.MockModule]
+
+parameter_file = 'modules/tests/test_pipeline_control_mock_module.toml' 

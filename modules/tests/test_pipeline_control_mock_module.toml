@@ -1,0 +1,7 @@
+[Master] 
+
+pipeline = ['tests.MockSubModule(arg1=10)'] 
+
+[tests.MockSubModule]
+
+arg2 = 'hello' 

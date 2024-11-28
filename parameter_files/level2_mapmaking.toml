@@ -1,0 +1,50 @@
+[Master] 
+
+log_file = 'logs/{}_main_run.log'
+
+sql_database = 'databases/COMAP_manchester.db'
+
+min_obsid = 41300
+max_obsid = 41501
+source_group = 'Galactic'
+
+pipeline = [
+            'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=0, wcs_def="Galactic", map_name="comap_galactic")',
+            # 'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=1)',
+            # 'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=2)',
+            # 'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=3)', 
+            # 'modules.MapMaking.MapMakingModules.CreateMapPerFeed.CreateMapPerFeed(band=0)',
+            # 'modules.MapMaking.MapMakingModules.CreateMapPerFeed.CreateMapPerFeed(band=1)',
+            # 'modules.MapMaking.MapMakingModules.CreateMapPerFeed.CreateMapPerFeed(band=2)',
+            # 'modules.MapMaking.MapMakingModules.CreateMapPerFeed.CreateMapPerFeed(band=3)',
+            # 'modules.MapMaking.MapMakingModules.CreateMapEpoch.CreateMapEpoch(start="2022-06-01",band=0)', # az speed halved 
+            # 'modules.MapMaking.MapMakingModules.CreateMapEpoch.CreateMapEpoch(start="2021-06-01",end="2022-06-01,band=0)', # Replaced pixels 7,8, 2 and 13
+            # 'modules.MapMaking.MapMakingModules.CreateMapEpoch.CreateMapEpoch(end="2021-06-01",band=0)',
+            # 'modules.MapMaking.MapMakingModules.CreateMapSeasons.CreateMapSeasons(season="summer",band=0)',
+            # 'modules.MapMaking.MapMakingModules.CreateMapSeasons.CreateMapSeasons(season="winter",band=0)'
+        ] 
+
+
+[modules.MapMaking.MapMakingModules.CreateMap.CreateMap]
+
+output_dir = '/scratch/nas_core2/sharper/COMAP/level2_data_2024/level2_maps/all_feeds'
+
+wcs_def_file = 'parameters/wcs_definitions.toml'
+
+post_processing = [
+                    'modules.MapMaking.MapMakingModules.PostProcessMap.RemoveBadPixels()',
+                    'modules.MapMaking.MapMakingModules.PostProcessMap.UpdateHeader()',
+                    'modules.MapMaking.MapMakingModules.PostProcessMap.UpdateDatabase()'
+                ]
+
+[modules.MapMaking.MapMakingModules.CreateMapPerFeed.CreateMapPerFeed]
+
+output_dir = '/scratch/nas_core2/sharper/COMAP/level2_data_2024/level2_maps/per_feed'
+
+[modules.MapMaking.MapMakingModules.CreateMapEpoch.CreateMapEpoch]
+
+output_dir = '/scratch/nas_core2/sharper/COMAP/level2_data_2024/level2_maps/epochs'
+
+[modules.MapMaking.MapMakingModules.CreateMapSeasons.CreateMapSeasons]
+
+output_dir = '/scratch/nas_core2/sharper/COMAP/level2_data_2024/level2_maps/seasons'

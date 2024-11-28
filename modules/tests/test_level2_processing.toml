@@ -1,0 +1,13 @@
+[Master] 
+
+log_file = 'logs/{}_main_run.log'
+
+sql_database = 'modules/tests/test.db'
+
+pipeline = ['modules.tests.MockModule.MockModule()']
+
+nprocess = 2 
+
+[modules.tests.MockModule.MockModule]
+
+arg1 = 'var1'
