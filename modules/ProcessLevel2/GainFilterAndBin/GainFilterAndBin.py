@@ -9,7 +9,7 @@ import numpy.ma as ma
 from tqdm import tqdm
 import h5py 
 from itertools import product 
-
+import sys 
 from modules.utils.data_handling import read_2bit
 from modules.SQLModule.SQLModule import COMAPData
 from modules.utils.linear_solver import AMatrixGainFilter
@@ -20,7 +20,7 @@ from modules.ProcessLevel2.GainFilterAndBin.GainFilters import GainFilterBase
 class GainFilterAndBin: 
 
     def __init__(self, end_cut=50, n_freq_bin=2, filtered_binned_data_name='binned_filtered_data', overwrite=False) -> None:
-        self.NCHANNELS = 1024
+        # self.NCHANNELS = 1024
         self.NBANDS = 4
         self.NFEEDS = 19
         self.end_cut = end_cut 
@@ -164,10 +164,17 @@ class GainFilterAndBin:
                     # Calibrate the data to the vane 
                     auto_rms = lvl2['level1_noise_stats/auto_rms'][feed-1,...]/gain 
                     data = data/gain[...,np.newaxis]
+                    median_offset = np.nanmedian(data,axis=-1)
 
                     # Subtract the best fit atmosphere model 
-                    elevation = np.radians(lvl2['spectrometer/pixel_pointing/pixel_el'][ifeed,...])
-
+                    try:
+                        elevation = np.radians(lvl2['spectrometer/pixel_pointing/pixel_el'][ifeed,...])
+                    except KeyError:
+                        print('KeyError: COMPONENT NOT FOUND line 171 GainFilterAndBin.py')
+                        print(file_info.level2_path)
+                        print(lvl2.keys())
+                        print(lvl2['spectrometer'].keys())
+                        sys.exit()
                     for iscan, (scan_start, scan_end) in enumerate(scan_edges):
                         atmos_offsets = lvl2['level2/atmosphere/offsets'][ifeed,...,iscan]
                         atmos_tau = lvl2['level2/atmosphere/tau'][ifeed,...,iscan] 
@@ -176,9 +183,10 @@ class GainFilterAndBin:
 
                     # Apply the gain filter 
                     data_filtered = np.zeros_like(data)
-                    for scan_start, scan_end in scan_edges:
+                    for scan_start, scan_end in scan_edges: 
                         data_filtered[...,scan_start:scan_end] = self.gain_filter(data[...,scan_start:scan_end], 
                                                                                     system_temperature, 
+                                                                                    median_offset,
                                                                                     auto_rms)
 
                     # Average the data in frequency 

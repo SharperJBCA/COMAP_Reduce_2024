@@ -4,19 +4,13 @@ log_file = 'logs/main_run.log'
 
 sql_database = 'databases/COMAP_manchester.db'
 
-#pipeline = [
-#    'modules.MapMaking.MapMaking.MapMaking()',
-#    'modules.DataAcquisition.DataAssess.DataAssess()',
-#    'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()'
-#]
-pipeline = ['modules.DataAcquisition.DataAcquisition.DataAcquisition()']
-    #
-#   'modules.DataAcquisition.DataAssess.DataAssess()',
-#            'Reduce.CreateLevel2()',
-#            'Calibrate.CleanCalibrators()',
-#            'Calibrate.ApplyCalibrators()',
-#            'Flagging.ApplyFlags()', 
-#            'MapMaking.MapMaker()'] 
+pipeline = [
+    #'modules.DataAcquisition.DataCheckRemote.DataCheckRemote()',
+    #'modules.DataAcquisition.DataAcquisition.DataAcquisition()',
+    #'modules.DataAcquisition.DataAssess.DataAssess()',
+    #'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()',
+    'modules.MapMaking.MapMaking.MapMaking()',
+]
 
 [modules.MapMaking.MapMaking.MapMaking]
 
@@ -25,7 +19,19 @@ config_file = 'parameter_files/level2_mapmaking.toml'
 [modules.ProcessLevel2.ProcessLevel2.Level2Pipeline]
 
 config_file = 'parameter_files/level2_processing.toml'
-MIN_OBSID = 41300
+MIN_OBSID = 7000
+
+[modules.DataAcquisition.DataCheckRemote.DataCheckRemote]
+
+#sql_file_command = "select distinct l.obs_id, l.pixel, b.name band, p.diskname disk, p.relpath path, f.shortname shortname,l.filename, o.comment obs_comment from level1 l, band b, filepath p, filetype f where l.band_id  = b.id and l.path_id = p.id and l.filetype_id = f.id and l.filename like '%hd5' order by l.obs_id;"
+sql_file_command = "select distinct l.obs_id, l.pixel, b.name band, p.diskname disk, p.relpath path, f.shortname shortname, l.filename                        from level1 l, band b, filepath p, filetype f                where l.band_id = b.id and l.path_id = p.id and l.filetype_id = f.id and                         l.filename like '%hd5' order by l.obs_id;"
+#sql_file_command = "select distinct l.obs_id, l.pixel, b.name band, p.diskname disk, p.relpath path, f.shortname shortname, l.filename, o.comment obs_comment from level1 l, band b, filepath p, filetype f                where l.band_id = b.id and l.path_id = p.id and l.filetype_id = f.id and                         l.filename like '%hd5' order by l.obs_id;"
+#sql_file_command = "select distinct l.obs_id, l.pixel, b.name band, p.diskname disk, p.relpath path, f.shortname shortname, l.filename, o.comment obs_comment from level1 l, band b, filepath p, filetype f, observation o where l.band_id = b.id and l.path_id = p.id and l.filetype_id = f.id and l.obs_id = o.obs_id and l.filename like '%hd5' order by l.obs_id;"
+#sql_file_command = "select distinct l.obs_id, l.pixel, b.name band, p.diskname disk, p.relpath path, f.shortname shortname, l.filename, o.comment obs_comment from level1 l, band b, filepath p, filetype f, observation o where l.band_id = b.id and l.path_id = p.id and l.filetype_id = f.id and l.obs_id = o.obs_id and l.filename like '%.hd5' order by l.obs_id;"
+presto_info = {host='comap_analysis@presto.caltech.edu', data_directory='/scr/comap/comapPathfinderLevel1/'}
+local_info  = {data_directory='/scratch/nas_core2/sharper/COMAP/data'}
+
+min_obsid_download = 45137
 
 [modules.DataAcquisition.DataAcquisition.DataAcquisition]
 
@@ -35,7 +41,7 @@ local_info  = {data_directory='/scratch/nas_core2/sharper/COMAP/data'}
 
 n_rsyncs = 2
 dry_run = false
-min_obsid_download = 40000 
+min_obsid_download = 45137 
 
 [modules.DataAcquisition.DataAssess.DataAssess]
 
@@ -44,6 +50,6 @@ level1_data_paths = ['/scratch/nas_comap1/sharper/COMAP/data',
                      '/scratch/nas_comap3/sharper/COMAP/data',
                      '/scratch/nas_core/sharper/COMAP/data/',
                      '/scratch/nas_core2/sharper/COMAP/data/']
-level2_data_paths = ['/scratch/nas_core/sharper/COMAP/level2_2023/']
+level2_data_paths = ['/scratch/nas_core2/sharper/COMAP/level2_data_2024/']
 
-overwrite_existing = true
+overwrite_existing = false

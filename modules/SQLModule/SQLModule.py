@@ -3,6 +3,11 @@ from sqlalchemy.orm import Mapped, mapped_column, sessionmaker, declarative_base
 from typing import ClassVar 
 import os 
 
+# Create an enumerator class for GOOD/BAD FILES 
+class FileFlag: 
+    GOOD_FILE = True 
+    BAD_FILE = False
+
 Base = declarative_base() 
 class COMAPData(Base):
     __tablename__ = 'comap_data'
@@ -30,6 +35,8 @@ class COMAPData(Base):
     utc_start: Mapped[str | None] = mapped_column(nullable=True)
     version: Mapped[str | None] = mapped_column(nullable=True)
 
+    quality_flags: Mapped[list["QualityFlag"]] = relationship("QualityFlag", back_populates="observation")
+
     @staticmethod
     def get_source_info(metadata: dict) -> tuple:
         """
@@ -54,41 +61,81 @@ class COMAPData(Base):
             if 'sky nod' in comment.lower():
                 source_group = 'SkyDip' 
         return source, source_group
+    
+class OldPathData(Base):
+    __tablename__ = 'old_path_data'
+    
+    obsid: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
+    old_level1_path: Mapped[str | None] = mapped_column(nullable=True)
 
-def create_feed_table(feed_number : int, band_number : int): 
-    tablename = f'comap_feed_{feed_number:02d}_band{band_number:02d}'
-    class COMAPFeed(Base): 
-        __tablename__ = tablename
+class QualityFlag(Base):
+    __tablename__ = 'quality_flags'
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    obsid: Mapped[int] = mapped_column(sa.ForeignKey('comap_data.obsid'), nullable=False)
+    pixel: Mapped[int] = mapped_column(nullable=False)  # 1-19
+    frequency_band: Mapped[int] = mapped_column(nullable=False)  # 0-7
+    is_good: Mapped[bool] = mapped_column(nullable=False, default=True)
+    comment: Mapped[str | None] = mapped_column(nullable=True, default=None)  # Adding comment field
+    
+    # Gain filtered noise statistics
+    filtered_red_noise: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    filtered_white_noise: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    filtered_auto_rms: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    filtered_noise_index: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    
+    # Raw noise statistics
+    unfiltered_red_noise: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    unfiltered_white_noise: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    unfiltered_auto_rms: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    unfiltered_noise_index: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    
+    # Additional statistics
+    n_spikes: Mapped[int | None] = mapped_column(nullable=True, default=None)
+    n_nan_values: Mapped[int | None] = mapped_column(nullable=True, default=None)
+    mean_atm_temp: Mapped[float | None] = mapped_column(nullable=True, default=None)
 
-        obsid: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
+    observation = relationship("COMAPData", back_populates="quality_flags")
+    
+    __table_args__ = (
+        sa.UniqueConstraint('obsid', 'pixel', 'frequency_band'),
+    )
 
-        level1_path: Mapped[str] = mapped_column(nullable=True)
-        level2_path: Mapped[str] = mapped_column(nullable=True) 
 
-        feed_number: Mapped[int] = mapped_column(nullable=True)
-        band_number: Mapped[int] = mapped_column(nullable=True)
-        total_bands: Mapped[int] = mapped_column(nullable=True) 
+# def create_feed_table(feed_number : int, band_number : int): 
+#     tablename = f'comap_feed_{feed_number:02d}_band{band_number:02d}'
+#     class COMAPFeed(Base): 
+#         __tablename__ = tablename
 
-        date_created: Mapped[str] = mapped_column(nullable=True) 
+#         obsid: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
 
-        bad_data: Mapped[bool] = mapped_column(nullable=True)
-        stats_fitted_rms_white : Mapped[float] = mapped_column(nullable=True)
-        stats_fitted_rms_red : Mapped[float] = mapped_column(nullable=True)
-        stats_fitted_noise_alpha : Mapped[float] = mapped_column(nullable=True)
-        stats_auto_rms : Mapped[float] = mapped_column(nullable=True) 
+#         level1_path: Mapped[str] = mapped_column(nullable=True)
+#         level2_path: Mapped[str] = mapped_column(nullable=True) 
 
-        sky_dip_median_amplitude : Mapped[float] = mapped_column(nullable=True)
-        sky_dip_median_opacity : Mapped[float] = mapped_column(nullable=True)
-        vane_median_tsys : Mapped[float] = mapped_column(nullable=True)
-        vane_median_gain : Mapped[float] = mapped_column(nullable=True) 
+#         feed_number: Mapped[int] = mapped_column(nullable=True)
+#         band_number: Mapped[int] = mapped_column(nullable=True)
+#         total_bands: Mapped[int] = mapped_column(nullable=True) 
 
-        weather_median_air_temperature : Mapped[float] = mapped_column(nullable=True)
-        weather_median_air_pressure : Mapped[float] = mapped_column(nullable=True)
-        weather_median_relative_humidity : Mapped[float] = mapped_column(nullable=True)
-        weather_median_rain_today : Mapped[float] = mapped_column(nullable=True)
-        weather_median_dew_point : Mapped[float] = mapped_column(nullable=True) 
+#         date_created: Mapped[str] = mapped_column(nullable=True) 
 
-    return COMAPFeed 
+#         bad_data: Mapped[bool] = mapped_column(nullable=True)
+#         stats_fitted_rms_white : Mapped[float] = mapped_column(nullable=True)
+#         stats_fitted_rms_red : Mapped[float] = mapped_column(nullable=True)
+#         stats_fitted_noise_alpha : Mapped[float] = mapped_column(nullable=True)
+#         stats_auto_rms : Mapped[float] = mapped_column(nullable=True) 
+
+#         sky_dip_median_amplitude : Mapped[float] = mapped_column(nullable=True)
+#         sky_dip_median_opacity : Mapped[float] = mapped_column(nullable=True)
+#         vane_median_tsys : Mapped[float] = mapped_column(nullable=True)
+#         vane_median_gain : Mapped[float] = mapped_column(nullable=True) 
+
+#         weather_median_air_temperature : Mapped[float] = mapped_column(nullable=True)
+#         weather_median_air_pressure : Mapped[float] = mapped_column(nullable=True)
+#         weather_median_relative_humidity : Mapped[float] = mapped_column(nullable=True)
+#         weather_median_rain_today : Mapped[float] = mapped_column(nullable=True)
+#         weather_median_dew_point : Mapped[float] = mapped_column(nullable=True) 
+
+#     return COMAPFeed 
 
 
 class SQLModule: 
@@ -110,10 +157,37 @@ class SQLModule:
         """
         self.session.close() 
 
+    def update_single_value(self, obsid: int, column_name: str, new_value: any) -> None:
+        """
+        Update a single value for a specific observation ID
+        
+        Args:
+            obsid (int): The observation ID to update
+            column_name (str): The name of the column to update
+            new_value (any): The new value to set
+            
+        Raises:
+            ValueError: If the column name doesn't exist or obsid not found
+        """
+        # Check if column exists
+        if column_name not in COMAPData.__table__.columns:
+            raise ValueError(f"Column '{column_name}' does not exist in COMAPData table")
+        
+        # Check if obsid exists
+        if not self.obsid_exists(obsid):
+            raise ValueError(f"Observation {obsid} does not exist")
+        
+        # Update the value
+        self.session.query(COMAPData).filter_by(obsid=obsid).update({column_name: new_value})
+        self.session.commit()
+
     def insert_or_update_data(self, data: dict) -> None:
         """
         Insert data into the SQL database or update if entry exists
         """
+        if isinstance(data, COMAPData):
+            data = data.__dict__
+            
         if 'obsid' not in data:
             raise ValueError("obsid is required for insert/update operations")
         
@@ -131,24 +205,50 @@ class SQLModule:
             existing = COMAPData(**filtered_data)
             self.session.add(existing)
             
+            for pixel in range(19):
+                for freq in range(8):
+                    flag = QualityFlag(
+                        obsid=filtered_data['obsid'],
+                        pixel=pixel,
+                        frequency_band=freq,
+                        is_good=True
+                    )
+                    self.session.add(flag)
+
         self.session.commit()
 
-    def insert_or_update_data_comapdata(self, data: COMAPData) -> None:
+    def initialize_quality_flags(self, obsid: int) -> None:
         """
-        Insert data into the SQL database or update if entry exists
+        Initialize default quality flags for an observation if they don't exist
         """
-        existing = self.session.query(COMAPData).filter_by(obsid=data.obsid).first()
-        
-        if existing:
-            # Update only the provided fields
-            for key in COMAPData.__table__.columns.keys():
-                setattr(existing, key, getattr(data, key))
-        else:
-            # Create new record
-            existing = data
-            self.session.add(existing)
+        # Check if observation exists
+        if not self.obsid_exists(obsid):
+            raise ValueError(f"Observation {obsid} does not exist")
             
-        self.session.commit()
+        # Get existing flags
+        existing_flags = (self.session.query(QualityFlag)
+                        .filter_by(obsid=obsid)
+                        .all())
+        existing_pixels = {(f.pixel, f.frequency_band) for f in existing_flags}
+        
+        # Create missing flags
+        new_flags = []
+        for pixel in range(19):
+            for freq in range(8):
+                if (pixel, freq) not in existing_pixels:
+                    new_flags.append(
+                        QualityFlag(
+                            obsid=obsid,
+                            pixel=pixel,
+                            frequency_band=freq,
+                            is_good=True
+                        )
+                    )
+        
+        if new_flags:
+            self.session.bulk_save_objects(new_flags)
+            self.session.commit()
+
 
     def delete_level2_data(self, obsid: int) -> None:
         """
@@ -210,7 +310,7 @@ class SQLModule:
         else:
             return {d.obsid: d for d in data}
         
-    def query_obsid_list(self, obsids: list, return_dict=True, source_group=None, source=None, min_obsid=7000) -> dict:
+    def query_obsid_list(self, obsids: list, return_list=False, return_dict=True, source_group=None, source=None, min_obsid=7000) -> dict:
         """
         Query the SQL database for a list of observation IDs
         """
@@ -224,6 +324,8 @@ class SQLModule:
             query = query.filter_by(source=source)
         query = query.filter(COMAPData.obsid >= min_obsid)
         data = query.all()
+        if return_list:
+            return data
 
         if return_dict:
             return {d.obsid: remove_hidden(d.__dict__) for d in data}
@@ -245,4 +347,153 @@ class SQLModule:
             return query.all()
         return query.filter_by(level2_path=None).all()
 
+    def add_quality_flags(self, obsid: int, flags: list[tuple[int, int, bool, str | None]]) -> None:
+        """
+        Add quality flags for an observation
+        
+        Args:
+            obsid: The observation ID
+            flags: List of tuples (pixel, frequency_band, is_good, comment)
+        """
+        for pixel, freq, is_good, comment in flags:
+            flag = QualityFlag(
+                obsid=obsid,
+                pixel=pixel,
+                frequency_band=freq,
+                is_good=is_good,
+                comment=comment
+            )
+            self.session.merge(flag)
+        self.session.commit()
+
+    # def get_quality_flags(self, obsid: int) -> dict[tuple[int, int], tuple[bool, str | None]]:
+    #     """
+    #     Get quality flags for an observation
+        
+    #     Returns:
+    #         Dictionary with (pixel, frequency_band) tuple as key and (is_good, comment) as value
+    #     """
+    #     flags = (self.session.query(QualityFlag)
+    #             .filter_by(obsid=obsid)
+    #             .all())
+    #     return {(flag.pixel, flag.frequency_band): (flag.is_good, flag.comment) for flag in flags}
+    
+    def get_quality_flags(self, obsid: int) -> dict[tuple[int, int], tuple[bool, str | None]]:
+        """
+        Get quality flags for an observation
+        
+        Returns:
+            Dictionary with (pixel, frequency_band) tuple as key and (is_good, comment) as value
+        """
+        flags = (self.session.query(QualityFlag)
+                .filter_by(obsid=obsid)
+                .all())
+        return {(flag.pixel, flag.frequency_band): flag for flag in flags}
+
+
+    def get_bad_data_points(self, obsid: int) -> list[tuple[int, int, str | None]]:
+        """
+        Get all bad data points (pixel, frequency_band, comment) for an observation
+        """
+        bad_flags = (self.session.query(QualityFlag)
+                    .filter_by(obsid=obsid, is_good=False)
+                    .all())
+        return [(flag.pixel, flag.frequency_band, flag.comment) for flag in bad_flags]
+    
+    def update_quality_flag_all(self, obsid: int, is_good: bool, comment: str = None) -> None:
+        """
+        Update all pixels/bands with the same quality flag
+        """
+
+        self.session.query(QualityFlag).filter_by(obsid=obsid).update({'is_good': is_good, 'comment': comment})
+        self.session.commit()
+
+
+    def update_quality_statistics(self, obsid: int, pixel: int, freq_band: int, stats: dict) -> None:
+        """
+        Update noise statistics for a specific obsid-pixel-frequency combination
+        
+        Args:
+            obsid (int): Observation ID
+            pixel (int): Pixel number (0-18)
+            freq_band (int): Frequency band (0-7)
+            stats (dict): Dictionary containing any of these keys:
+                - filtered_red_noise (float)
+                - filtered_white_noise (float)
+                - filtered_auto_rms (float)
+                - filtered_noise_index (float)
+                - unfiltered_red_noise (float)
+                - unfiltered_white_noise (float)
+                - unfiltered_auto_rms (float)
+                - unfiltered_noise_index (float)
+                - n_spikes (int)
+                - n_nan_values (int)
+                - mean_atm_temp (float)
+        """
+        # Get the existing flag
+        flag = (self.session.query(QualityFlag)
+            .filter_by(obsid=obsid, pixel=pixel, frequency_band=freq_band)
+            .first())
+        
+        if flag is None:
+            # If no flag exists, create one with default values
+            flag = QualityFlag(
+                obsid=obsid,
+                pixel=pixel,
+                frequency_band=freq_band,
+                is_good=True  # default to good
+            )
+            self.session.add(flag)
+        
+        # Update the statistics
+        for key, value in stats.items():
+            if hasattr(flag, key):
+                setattr(flag, key, value)
+        
+        self.session.commit()
+
+    def update_quality_statistics_bulk(self, obsid: int, stats_list: list[dict]) -> None:
+        """
+        Update noise statistics for multiple pixel-frequency combinations of an observation
+        
+        Args:
+            obsid (int): Observation ID
+            stats_list (list): List of dictionaries, each containing:
+                - pixel (int): Pixel number
+                - frequency_band (int): Frequency band
+                - filtered_red_noise (float, optional)
+                - filtered_white_noise (float, optional)
+                ... etc for all statistics ...
+        """
+        for stats in stats_list:
+            pixel = stats.pop('pixel')
+            freq_band = stats.pop('frequency_band')
+            self.update_quality_statistics(obsid, pixel, freq_band, stats)
+
 db = SQLModule() 
+
+
+class OldPathModule:
+    def __init__(self) -> None:
+        self.database = None
+
+    def connect(self, database_path: str) -> None:
+        self.database = sa.create_engine(f'sqlite:///{database_path}')
+        self.session = sessionmaker(bind=self.database)()
+        Base.metadata.create_all(self.database)
+
+    def disconnect(self) -> None:
+        self.session.close()
+
+    def insert_or_update_path(self, obsid: int, old_path: str | None) -> None:
+        data = self.session.query(OldPathData).filter_by(obsid=obsid).first()
+        if data:
+            data.old_level1_path = old_path
+        else:
+            data = OldPathData(obsid=obsid, old_level1_path=old_path)
+            self.session.add(data)
+        self.session.commit()
+
+    def get_path(self, obsid: int) -> str | None:
+        data = self.session.query(OldPathData).filter_by(obsid=obsid).first()
+        return data.old_level1_path if data else None

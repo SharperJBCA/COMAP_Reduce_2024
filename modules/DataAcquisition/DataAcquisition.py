@@ -20,7 +20,7 @@ from tqdm import tqdm
 import sys 
 import multiprocessing
 from modules.SQLModule.SQLModule import db, COMAPData 
-
+import time 
 from modules.DataAcquisition.DataAssess import DataAssess
 
 
@@ -77,15 +77,20 @@ class DataAcquisition:
         output = {}
         for iline,line in enumerate(tqdm(pipe.decode('ASCII').splitlines(),desc='Querying SQL database')):
             #obsid,_,band,relpath,path,level,filename,target_id, target_name = line.split()
-            obsid,_,band,relpath,path,level,filename = line.split()
+            line_no_comment = line.split('(')[0]
+            try:
+                comment = line.split('(')[1] 
+            except IndexError:
+                comment = 'Unknown'
+            obsid,_,band,relpath,path,level,filename = line_no_comment.split()[:7]
             #logging.info('obsid: {}, band: {}, relpath: {}, path: {}, level: {}, filename: {}'.format(obsid,band,relpath,path,level,filename))
             try:
                 if isinstance(obsid,str):
                     output[int('{}'.format(obsid))] = {'filename':'/comap{}/{}/{}'.format(relpath[1:],path,filename),
-                                                       'target':'Unknown'}
+                                                       'target':'Unknown','comment':comment}
                 else:
                     output[int('{}'.format(obsid.decode('ASCII')))] = {'filename':'/comap{}/{}/{}'.format(relpath.decode()[1:],path.decode(),filename.decode()),
-                                                                       'target':'Unknown'}
+                                                                       'target':'Unknown', 'comment':comment}
             except ValueError:
                 continue
 
@@ -127,38 +132,59 @@ class DataAcquisition:
         chunks = np.array_split(np.arange(filelist.size), num_rsyncs)
         base_command = 'rsync -rLptgoDvhz -e ssh {} {} --progress {}'
 
+        def download_with_retry(remote_path, local_path, max_retries=2):
+            """Download a single file with retries"""
+            for i in range(max_retries):
+                try:
+                    command = base_command.format(remote_path, local_path, dry_run_str)
+                    process = subprocess.run(command, shell=True, check=True)
+                    return True
+                except Exception as e:
+                    logging.info(f'Attempt {i+1} failed')
+                    logging.error(f"Error downloading file: {str(e)}")
+                    if i < max_retries - 1:
+                        sleep_time = (i+1) * 10 
+                        logging.info(f"Sleeping for {sleep_time} seconds before retrying")
+                        time.sleep(sleep_time)
+                    else:
+                        logging.error(f"Failed to download file after {max_retries} attempts")
+                        return False
+                    
         def download_and_update(file_indices):
             """Download files and update database for a group of files"""
+            successful_downloads = [] 
+            failed_downloads     = []
             for idx in file_indices:
                 # Download single file
                 remote_path = f"{self.presto_info['host']}:{filelist[idx]}"
-                command = base_command.format(remote_path, self.local_info['data_directory'],dry_run_str)
-                
-                # Log the command
-                log_file = f'rsync_{idx}.log'
-                with open(log_file, 'w') as f:
-                    f.write(command)
-                
-                # Execute rsync
-                process = subprocess.run(command, shell=True, check=True)
-                
-                if process.returncode == 0:
-                    # Update database for this file
-                    single_local_path = [local_paths[idx]]
-                    single_obsid = [obsids[idx]]
-                    
-                    try:
+
+                if download_with_retry(remote_path, self.local_info['data_directory']):
+                    successful_downloads.append(idx)
+
+                    try: 
+                        single_local_path = [local_paths[idx]]
+                        single_obsid = [obsids[idx]]
                         file_info = DataAssess.get_file_paths_metadata(single_local_path)
-                        DataAssess.update_sql_database([single_obsid], file_info)
+                        DataAssess.update_sql_database(single_obsid, file_info)
                         logging.info(f"Successfully downloaded and updated database for obsid {single_obsid}")
                     except Exception as e:
                         logging.error(f"Error updating database for obsid {single_obsid}: {str(e)}")
+                        failed_downloads.append(idx)
+                        successful_downloads.remove(idx)
                 else:
                     logging.error(f"Failed to download file for obsid {obsids[idx]}")
+                    failed_downloads.append(idx)
+
+            
+            return successful_downloads, failed_downloads
+
+        all_successful_downloads = []
+        all_failed_downloads = []
+        result_queue = multiprocessing.Queue()
 
         processes = []
         for chunk in chunks:
-            p = multiprocessing.Process(target=download_and_update, args=(chunk,))
+            p = multiprocessing.Process(target=lambda q, chunk: q.put(download_and_update(chunk)), args=(result_queue, chunk))
             p.start()
             processes.append(p)
 
@@ -166,27 +192,13 @@ class DataAcquisition:
         for p in processes:
             p.join()
 
-        # polls = []
-        # for i in range(num_rsyncs):
-        #     sel = np.where((rsync_jobids == i))[0]
-        #     files = filelist[sel]
+        while not result_queue.empty():
+            successful_downloads, failed_downloads = result_queue.get()
+            all_successful_downloads.extend(successful_downloads)
+            all_failed_downloads.extend(failed_downloads)
 
-        #     filestr = ' '.join(['{}:{}'.format(self.presto_info['host'],filename) for filename in files])
-            
-        #     command = base_command.format(dry_run_str, filestr, self.local_info['data_directory'])
-            
-        #     with open(f'rsync_{i}.log','w') as f:
-        #         f.write(command)
-        #     p=subprocess.Popen(command, shell=True)
-        #     polls += [p]
-    
-        # # Wait here until all process are finished
-        # while any([process.poll() is None for process in polls]):
-        #     pass
-
-        # # UPDATE THE SQL DATABASE WITH METADATA FROM THE FILES
-        # file_info = DataAssess.get_file_paths_metadata(local_paths)
-        # DataAssess.update_sql_database(obsids, file_info)
+        logging.info(f"Successfully downloaded and updated database for {len(all_successful_downloads)} files")
+        logging.info(f"Failed to download and update database for {len(all_failed_downloads)} files")
 
         return local_paths
 

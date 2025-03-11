@@ -22,6 +22,28 @@ import sys
 from modules.SQLModule.SQLModule import db, COMAPData
 from modules.parameter_files.parameter_files import read_parameter_file
 
+def get_file_list(target_source_group=None, target_source=None, min_obs_id=7000, max_obs_id=100000, obsid_list=None):
+    # Get the filelist from the database
+    if obsid_list is not None:
+        query_source_group_list = db.query_obsid_list(obsid_list, 
+                                                            return_dict=False)
+    else:
+        query_source_group_list = db.query_source_group_list(target_source_group, 
+                                                            source=target_source, 
+                                                            min_obsid=min_obs_id, 
+                                                            max_obsid=max_obs_id,
+                                                            return_dict=False)
+    source_file_list = [f.level2_path for k,f in query_source_group_list.items() if f.level2_path is not None]
+    
+    # Check that level2/binned_filtered_data in each file 
+    final_files = [] 
+    for f in source_file_list:
+        with h5py.File(f, 'r') as h5:
+            if ('level2/binned_filtered_data' in h5) and ('level2_noise_stats/binned_filtered_data/auto_rms' in h5):
+                final_files.append(f) 
+    
+    return final_files
+
 class MapMaking: 
 
     def __init__(self, config_file='') -> None:
@@ -36,20 +58,26 @@ class MapMaking:
     def run(self) -> None:
         logging.info("Running MapMaking") 
 
-        target_source_group = self.parameters['Master'].get('source_group', None)
-        target_source       = self.parameters['Master'].get('source'      , None)
         min_obs_id          = self.parameters['Master'].get('min_obsid', 7000)
         max_obs_id          = self.parameters['Master'].get('max_obsid', 100000)
+        obsid_list          = self.parameters['Master'].get('obsid_list', None)
 
-        # Get the data from the database
-        query_source_group_list = db.query_source_group_list(target_source_group, min_obsid=min_obs_id, max_obsid=max_obs_id,return_dict=False)
-        source_file_list = [f.level2_path for k,f in query_source_group_list.items()]
+
         for module_info in self.parameters['Master']['_pipeline']:
+
+
             package = module_info['package']
             module = module_info['module']
             args = module_info['args']
             # Import the module
             module = getattr(importlib.import_module(package), module)
             module = module(**args)
+
+            final_files = get_file_list(target_source_group=module.source_group, 
+                                        target_source=module.source,
+                                        min_obs_id=min_obs_id, 
+                                        max_obs_id=max_obs_id, 
+                                        obsid_list=obsid_list)
+
             # Execute the module
-            module.run(source_file_list)
+            module.run(final_files)

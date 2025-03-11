@@ -96,21 +96,23 @@ class DataAssess:
                 try:
                     obsid_from_path = get_obsid_from_path(file_path)
                 except ValueError as e:
-                    print(e)
-                    print(file_path) 
+                    logging.debug(f'Error getting obsid from path: {file_path}')
+                    logging.debug(e)
                     continue
                 if db.obsid_exists(obsid_from_path):
-                    logging.info(f'Obsid {obsid_from_path} already in database')
+                    logging.debug(f'Obsid {obsid_from_path} already in database')
                     continue
 
                 if condition(file_path.rsplit('/')[-1]):
                     try:
                         with h5py.File(file_path, 'r') as f:
                             if not 'comap' in f:
+                                #print(f'No comap group in file: {file_path}')
                                 logging.info(f'No comap group in file: {file_path}')
                                 continue
                             comap_metadata = {k:v for k,v in f['comap'].attrs.items()} 
                             if not 'obsid' in comap_metadata:
+                                #print(f'No obsid in file: {file_path}')
                                 logging.info(f'No obsid in file: {file_path}')
                                 continue
                             comap_metadata[file_path_key] = file_path
@@ -120,6 +122,5 @@ class DataAssess:
                         logging.error(f'Error reading file: {file_path}')
                         continue
                     file_info[comap_metadata['obsid']] = comap_metadata 
-                
         return file_info
     

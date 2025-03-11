@@ -9,18 +9,26 @@ import h5py
 from scipy.interpolate import interp1d
 import sys 
 from modules.SQLModule.SQLModule import COMAPData, db 
+from modules.ProcessLevel2.SystemTemperature.SystemTemperature import SystemTemperature
+from modules.utils.data_handling import read_2bit 
+
+from modules.pipeline_control.Pipeline import BadCOMAPFile
 
 class FindScans:
 
-    def __init__(self, plot : bool = False, plot_dir : str = 'outputs/FindScans', scan_status_code : int = 1) -> None:
+    def __init__(self, plot : bool = False, plot_dir : str = 'outputs/FindScans', scan_status_code : int = 1, overwrite : bool = False) -> None:
         self.plot = plot
         self.plot_dir = plot_dir
         self.scan_status_code = scan_status_code
+        self.overwrite = overwrite
 
-    def already_processed(self, file_info : COMAPData) -> bool:
+    def already_processed(self, file_info : COMAPData, overwrite : bool = False) -> bool:
         """
         Check if the scan edges have already been found 
         """
+        if overwrite:
+            return False
+
         with h5py.File(file_info.level2_path,'r') as ds: 
             if 'level2/scan_edges' in ds:
                 return True
@@ -37,14 +45,33 @@ class FindScans:
             scan_status_interp = interp1d(scan_utc,scan_status,kind='previous',bounds_error=False,
                                         fill_value='extrapolate')(data['spectrometer/MJD'][...])
             if np.sum(scan_status) == 0:
-                # instead use the feature bits as we probably have 1 scan 
-                select = np.where((data.features == 9))[0] 
-                scan_edges = np.array([select[0],select[-1]]).reshape(1,2)
+                features = read_2bit(data['spectrometer/features'][...])
+                if len(np.unique(features)) <= 1:
+                    raise BadCOMAPFile(file_info.obsid, "No valid features found in data file")
+                vane_edges = SystemTemperature.find_contiguous_blocks(features, 13)
+
+                # Don't want data before or after the Vane. 
+                features[:vane_edges[0][0]] = -1
+                if len(vane_edges) == 2:
+                    features[vane_edges[1][1]:] = -1
+
+                if 8 in features:
+                    scan_edges = SystemTemperature.find_contiguous_blocks(features, 8)
+                elif 9 in features:
+                    scan_edges = SystemTemperature.find_contiguous_blocks(features, 9)
+                elif 10 in features:
+                    scan_edges = SystemTemperature.find_contiguous_blocks(features, 10)
+                else:
+                    scan_edges = None
             else:
                 scans = np.where((scan_status_interp == self.scan_status_code))[0]
                 diff_scans = np.diff(scans)
                 edges = scans[np.concatenate(([0],np.where((diff_scans > 1))[0], [scans.size-1]))]
                 scan_edges = np.array([edges[:-1],edges[1:]]).T
+
+        if isinstance(scan_edges, type(None)):
+            print(file_info.obsid,np.unique(features))
+            raise BadCOMAPFile(file_info.obsid, "No valid features found in data file")
 
         return scan_edges
     
@@ -66,7 +93,7 @@ class FindScans:
         Find the scan edges between each repointing of the telescope
         """
 
-        if self.already_processed(file_info):
+        if self.already_processed(file_info, self.overwrite):
             return
 
         scan_edges = self.find_scans(file_info) 

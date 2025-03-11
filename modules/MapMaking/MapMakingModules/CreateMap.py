@@ -8,45 +8,78 @@ import logging
 from astropy.wcs import WCS 
 from astropy.io.fits.header import Header
 import toml
-from modules.MapMaking.MapMakingModules.ReadData import Level2Data_Nov2024 
+from modules.MapMaking.MapMakingModules.ReadData import Level2DataReader_Nov2024 
 import sys 
 
+from pathlib import Path
+import subprocess
+import os 
 class CreateMap:
 
-    def __init__(self, map_name : str = 'Unkwown', band : int = 0, output_dir : str = 'outputs/', wcs_def : str = None, wcs_def_file : str = None) -> None:
+    def __init__(self, map_name : str = 'Unknown', band : int = 0, output_dir : str = 'outputs/', 
+                 source : str = 'Unknown', source_group : str = 'Unknown',
+                 wcs_def : str = None, wcs_def_file : str = None, offset_length : int = 100,
+                 feeds : list = [i for i in range(1,20)],
+                 tod_data_name : str = 'level2/binned_filtered_data',
+                 n_processes : int = 1) -> None:
         logging.info("Initializing CreateMap")
 
-        self.output_dir = output_dir
-        if wcs_def is None:
-            raise ValueError("wcs_def is required for CreateMap")
-        if wcs_def_file is None:
-            raise ValueError("wcs_def_file is required for CreateMap")
-        self.wcs_def = wcs_def
-
-        wcs_defs = toml.load(wcs_def_file) 
-
-        self.wcs_dict = wcs_defs[wcs_def] 
-
-        self.header = Header(self.wcs_dict) 
-
-        self.data_object = Level2Data_Nov2024(band=band) 
-
-        self.band = band
         self.map_name = map_name
+        self.tod_data_name = tod_data_name
+        self.band = band
+        self.output_dir = output_dir
+        self.source = source    
+        self.source_group = source_group
+        os.makedirs(self.output_dir, exist_ok=True) 
+        self.config_file = f'{ os.getcwd()}/modules/MapMaking/map_making_configs/config.toml'
+        self.parameters = {'band': band,
+                      'wcs_def': wcs_def,
+                      'source': source,
+                        'source_group': source_group,
+                      'offset_length': offset_length,
+                      'feeds': feeds,
+                      'map_name': map_name,
+                      'tod_data_name': tod_data_name,
+                      'file_list': f'{ os.getcwd()}/modules/MapMaking/map_making_configs/file_list.txt',
+                      'output_filename': f'{map_name}_band{band}_feed{"-".join([str(f) for f in feeds])}.fits',
+                      'output_dir': output_dir}
+        self.n_processes = n_processes
+
+    def create_config_file(self, file_list : list, feeds : list = [i for i in range(1,20)], output_filename='output.fits') -> None: 
+        """
+        
+        """
+        # write dictionary to toml file
+        self.parameters['feeds'] = feeds
+        self.parameters['output_filename'] = output_filename
+        with open(self.config_file, 'w') as f:
+            toml.dump(self.parameters, f) 
+        with open(self.parameters['file_list'], 'w') as f:
+            for file in file_list:
+                f.write(file + '\n')
 
     def run(self, file_list : list) -> None:
         logging.info("Running CreateMap")
-
-        for file in file_list:
-            print(file)
-            sys.exit()
-            self.data_object.read_data(file, band=self.band) 
-            self.data_object.setup_wcs(self.header) 
-
-        self.create_map()
-        self.write_map() 
-
-    def create_map(self) -> None:
-        logging.info("Creating map")
-
+        mapmaking_dir = Path(__file__).parent.parent.absolute()
+        working_dir = os.getcwd()
+        feeds = self.parameters['feeds']
+        feeds_str = '-'.join([f'{i:02d}' for i in feeds])
+        self.create_config_file(file_list, feeds=feeds, output_filename=f'{self.map_name}_band{self.band:02d}_feed{feeds_str}.fits') 
         
+
+        # Run mpirun from the MapMaking directory
+
+        env = os.environ.copy()
+        command = ['mpirun', '-n', str(self.n_processes), 'python', f'{mapmaking_dir}/run_map_making.py', f'{self.config_file}']
+        print(' '.join(command))
+        #subprocess.run(' '.join(command), shell=True, cwd=working_dir)
+        file_list_str = 'CREATEMAP: MAPPING {n_files} for {self.source} band {self.band}'.format(n_files=len(file_list), self=self)
+        print(file_list_str)
+        logging.info(file_list_str)
+        try:
+            result = subprocess.run(command, shell=False, cwd=working_dir, capture_output=True, text=True, env=env)
+            print("Return code:", result.returncode)
+            print("Stdout:", result.stdout)
+            print("Stderr:", result.stderr)
+        except Exception as e:
+            print("Exception:", str(e))

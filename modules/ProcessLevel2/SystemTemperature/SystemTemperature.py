@@ -28,6 +28,10 @@ from scipy.interpolate import interp1d
 from matplotlib import pyplot 
 import os 
 from matplotlib.lines import Line2D
+import logging
+
+from modules.pipeline_control.Pipeline import BadCOMAPFile
+
 class SystemTemperature: 
 
     def __init__(self, plot_vane : bool = False, plot_dir : str = '', plot_tsys : bool = True, overwrite=False) -> None:
@@ -60,22 +64,6 @@ class SystemTemperature:
                 return True 
         return False
 
-    @staticmethod
-    def vane_idx_edges(spec_features : np.ndarray, vane_feature : int ) -> list:
-        
-        # Get start and stop times of the vane events 
-        vane_features = np.where((spec_features == vane_feature))[0]
-        vane_features_diff = np.diff(vane_features)
-        vane_idx_edges = np.where((vane_features_diff > 1000))[0]
-        n_vane_events = len(vane_idx_edges) + 1 
-        vane_idx_edges = np.insert(vane_idx_edges, 0, -1)
-        vane_idx_edges = np.append(vane_idx_edges, len(vane_features)-1)
-
-        vane_edges = [] 
-        for i in range(n_vane_events):
-            vane_edges.append([vane_features[vane_idx_edges[i]+1],vane_features[vane_idx_edges[i+1]]])
-
-        return vane_edges
     
     def plot_vane_events(self, file_info : COMAPData) -> None:
         """
@@ -99,8 +87,7 @@ class SystemTemperature:
         spec_angle = interp1d(antenna0_mjd, vane_angle, kind='nearest', bounds_error=False, fill_value=-1)(spec_mjd)
         colors = np.array([color_map[x] for x in spec_features])
         time_seconds = (spec_mjd-spec_mjd.min())*24*3600
-
-        vane_edges = self.vane_idx_edges(spec_features, self.VANE_FEATURE )
+        vane_edges = self.find_contiguous_blocks(spec_features, self.VANE_FEATURE)
 
         for i, (idx_start,idx_stop) in enumerate(vane_edges):
             # Plot the vane events
@@ -197,10 +184,26 @@ class SystemTemperature:
             pyplot.savefig(os.path.join(self.plot_dir, f'obs{file_info.obsid:08d}_angle_zoom_low_vane_event{i:02d}.png'))
             pyplot.close()
 
+    @staticmethod
+    def find_contiguous_blocks(arr, value):
+        # Create boolean mask
+        mask = (arr == value)
+        
+        # Add padding to handle edge cases
+        padded = np.concatenate(([False], mask, [False]))
+        
+        # Find edges using diff
+        edges = np.flatnonzero(np.diff(padded.astype(int)))
+        
+        # Pair up start and end indices
+        return list(zip(edges[::2], edges[1::2] - 1))
+    
     def get_vane_data(self, ds : h5py.File) -> np.ndarray:
         """
         Get the vane data 
         """
+        if not '/hk/antenna0/vane/Tshroud' in ds:
+            raise BadCOMAPFile(int(ds['comap'].attrs['obsid']), "No vane data found in data file")
 
         T_h = np.mean(ds['/hk/antenna0/vane/Tshroud'][:])*0.01 + 273.15 # K
 
@@ -214,16 +217,12 @@ class SystemTemperature:
         spec_angle = interp1d(antenna0_mjd, vane_angle, kind='nearest', bounds_error=False, fill_value=-1)(spec_mjd)
 
         # Get start and stop times of the vane events 
-        vane_features = np.where((spec_features == self.VANE_FEATURE))[0]
-        vane_features_diff = np.diff(vane_features)
-        vane_idx_edges = np.where((vane_features_diff > 1000))[0]
-        n_vane_events = len(vane_idx_edges) + 1 
-        vane_idx_edges = np.insert(vane_idx_edges, 0, -1)
-        vane_idx_edges = np.append(vane_idx_edges, len(vane_features)-1)
-
-        vane_edges = [] 
-        for i in range(n_vane_events):
-            vane_edges.append([vane_features[vane_idx_edges[i]+1],vane_features[vane_idx_edges[i+1]]])
+        vane_edges = self.find_contiguous_blocks(spec_features, self.VANE_FEATURE)
+        n_vane_events = len(vane_edges)
+        if n_vane_events < 1:
+            print('No vane events found')
+            obsid = int(ds['comap'].attrs['obsid'])
+            raise BadCOMAPFile(obsid, "No valid vane events found in data file")
 
         vane_angles = [] 
         vane_hots   = [] 
@@ -331,8 +330,11 @@ class SystemTemperature:
         """
 
         with h5py.File(file_info.level1_path, 'r') as ds: 
+            
             T_h, vane_hots, vane_colds = self.get_vane_data(ds)
 
+            if isinstance(vane_hots, type(None)): # No vane events means we can't calibrate, skip observation. 
+                return 
             tsys = self.calculate_system_temperature(T_h, vane_hots, vane_colds) 
             gain = self.calculate_gain(T_h, vane_hots, vane_colds) 
 
@@ -348,6 +350,8 @@ class SystemTemperature:
         if self.already_processed(file_info, self.overwrite):
             return 
 
+        print('PROCESSING SYSTEM TEMPERATURE FOR:', file_info.level1_path) 
+        logging.info(f'Processing System Temperature for {file_info.level1_path}')
         self.measure_system_temperature(file_info) 
 
         if self.plot_vane:

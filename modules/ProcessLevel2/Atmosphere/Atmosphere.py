@@ -28,15 +28,14 @@ class AtmosphereInObservation:
         self.plot = plot
         self.plot_dir = plot_dir 
 
+        self.target_tod_dataset = 'spectrometer/tod'
+
     def already_processed(self, file_info : COMAPData) -> bool:
         """
         Check if the atmosphere has already been fit for this observation 
         """
             
         with h5py.File(file_info.level2_path, 'r') as lvl2: 
-            print('level2' in lvl2)
-            print('level2/atmosphere' in lvl2)
-            print(file_info.level2_path)
             if 'level2/atmosphere' in lvl2:
                 return True
             return False
@@ -50,11 +49,6 @@ class AtmosphereInObservation:
             with h5py.File(file_info.level1_path,'r') as ds: 
 
                 feeds = ds['spectrometer/feeds'][:] 
-                frequencies = ds['spectrometer/frequency'][:]
-                features  = read_2bit(ds['spectrometer/features'][...])
-                data_indices = np.where((features != -1) & (features != 13))[0] 
-                start_index  = data_indices[0]
-                end_index    = data_indices[-1]
                 scan_edges = lvl2['level2/scan_edges'][...]
                 n_scans = scan_edges.shape[0] 
                 atmos_offsets = np.zeros((self.NFEEDS, self.NBANDS, self.NCHANNELS, n_scans))
@@ -64,7 +58,7 @@ class AtmosphereInObservation:
                     if feed == 20:
                         continue 
 
-                    feed_data = ds['spectrometer/tod'][ifeed, ...]
+                    feed_data = ds[self.target_tod_dataset][ifeed, ...]
                     elevation = ds['spectrometer/pixel_pointing/pixel_el'][ifeed,...]
                     gain = lvl2['level2/vane/gain'][0,ifeed,...]
 
@@ -82,9 +76,11 @@ class AtmosphereInObservation:
                         el   = np.radians(elevation[scan_start:scan_end])
                         if all(np.isnan(data)):
                             continue
-                        mask = ~np.isnan(data)
+                        mask = np.isfinite(data) & np.isfinite(el) 
                         data = data[mask]
                         el = el[mask]
+                        if data.size == 0:
+                            continue
                         # Fit the atmosphere 
                         A = np.ones((el.size,2))
                         A[:,1] = 1./np.sin(el)
@@ -171,6 +167,14 @@ class AtmosphereInObservation:
                 del grp2['tau']
             ds = grp2.create_dataset('tau', data=atmos_tau)
 
+            
+    def get_nchannels(self, file_info : COMAPData) -> int:
+        """
+        Get the number of channels in the data 
+        """
+        with h5py.File(file_info.level1_path, 'r') as f:
+            return f[self.target_tod_dataset].shape[2] 
+
     def run(self, file_info : COMAPData) -> None:
         """
         Fit the atmosphere for a single observation 
@@ -178,6 +182,10 @@ class AtmosphereInObservation:
 
         if self.already_processed(file_info):
             return
+
+        print('LEVEL1', file_info.level1_path)
+        print('LEVEL2', file_info.level2_path)
+        self.NCHANNELS = self.get_nchannels(file_info)
 
         atmos_offsets, atmos_tau = self.fit_atmosphere(file_info) 
 
@@ -198,6 +206,8 @@ class AtmosphereFromVane:
 
         self.plot = plot
         self.plot_dir = plot_dir 
+
+        self.target_tod_dataset = 'spectrometer/tod'
 
     def already_processed(self, file_info : COMAPData) -> bool:
         """
@@ -234,7 +244,7 @@ class AtmosphereFromVane:
                     if feed == 20:
                         continue 
 
-                    feed_data = ds['spectrometer/tod'][ifeed, ...]
+                    feed_data = ds[self.target_tod_dataset][ifeed, ...]
                     elevation = ds['spectrometer/pixel_pointing/pixel_el'][ifeed,...]
                     gain = lvl2['level2/vane/gain'][0,ifeed,...]
 
@@ -341,6 +351,13 @@ class AtmosphereFromVane:
                 del grp2['tau']
             ds = grp2.create_dataset('tau', data=atmos_tau)
 
+    def get_nchannels(self, file_info : COMAPData) -> int:
+        """
+        Get the number of channels in the data 
+        """
+        with h5py.File(file_info.level1_path, 'r') as f:
+            return f[self.target_tod_dataset].shape[2] 
+
     def run(self, file_info : COMAPData) -> None:
         """
         Fit the atmosphere for a single observation 
@@ -348,6 +365,8 @@ class AtmosphereFromVane:
 
         if self.already_processed(file_info):
             return
+
+        self.NCHANNELS = self.get_nchannels(file_info)
 
         atmos_offsets, atmos_tau = self.fit_atmosphere(file_info) 
 

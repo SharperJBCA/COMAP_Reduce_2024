@@ -25,6 +25,7 @@ class NoiseStatsLevel1:
         self.NFEEDS = 19
         self.plot = plot
         self.output_dir = output_dir
+        self.target_tod_dataset = 'spectrometer/tod'
         os.makedirs(self.output_dir, exist_ok=True)
 
     def already_processed(self, file_info : COMAPData) -> bool:
@@ -34,6 +35,13 @@ class NoiseStatsLevel1:
         with h5py.File(file_info.level2_path, 'r') as f:
             if 'level1_noise_stats' in f:
                 return True
+            
+    def get_nchannels(self, file_info : COMAPData) -> int:
+        """
+        Get the number of channels in the data 
+        """
+        with h5py.File(file_info.level1_path, 'r') as f:
+            return f[self.target_tod_dataset].shape[2] 
 
     def run(self, file_info : COMAPData) -> None:
         """ """
@@ -41,6 +49,7 @@ class NoiseStatsLevel1:
         if self.already_processed(file_info):
             return 
 
+        self.NCHANNELS = self.get_nchannels(file_info)
         statistics = self.fit_statistics(file_info) 
         self.save_statistics(file_info, statistics) 
 
@@ -109,7 +118,7 @@ class NoiseStatsLevel1:
 
         return k[1:], Pk[1:]
     
-    def fnoise_fit(self, data : np.ndarray, auto_rms : float, k_ref : float = 1.0) -> tuple:
+    def fnoise_fit(self, data : np.ndarray, auto_rms : float, k_ref : float = 0.1) -> tuple:
         """
         Transform data to fourier spectrum and fit model:
         P(k) = sigma_white^2 + sigma_red^2 * (k/k_ref)^alpha
@@ -151,7 +160,7 @@ class NoiseStatsLevel1:
                 if feed == 20:
                     continue 
 
-                feed_data = f['spectrometer/tod'][ifeed, ...]
+                feed_data = f[self.target_tod_dataset][ifeed, ...]
 
                 indices = itertools.product(
                     range(self.NBANDS),
@@ -174,17 +183,28 @@ class NoiseStatsLevel1:
         return statistics
 
 class NoiseStatsLevel2(NoiseStatsLevel1):
+    """
+    
+    ###Note to future me###
+    The white noise (sigma_white_noise) will be 0.0 if the red noise is 
+    so high that the knee frequency is > sample_frequency/2. 
+    So, just remember this when assigning flags, 0.0 noise is not a bad fit but it might imply
+    bad data!
+
+    """
 
     def __init__(self, plot=False, output_dir='outputs/NoiseStatsLevel2', 
                  n_channels=2, output_group_name='level2_noise_stats', 
-                 target_tod_dataset='level2/binned_filtered_data') -> None:
+                 target_tod_datasets=['level2/binned_filtered_data'],
+                 overwrite=False) -> None:
         self.n_channels = n_channels
         self.NFEEDS = 19
         self.NBANDS = 4 
         self.output_group_name = output_group_name  
-        self.target_tod_dataset = target_tod_dataset
+        self.target_tod_datasets = target_tod_datasets
         self.plot = plot
         self.output_dir = output_dir
+        self.overwrite = overwrite
         os.makedirs(self.output_dir, exist_ok=True)
 
     def already_processed(self, file_info : COMAPData) -> bool:
@@ -196,16 +216,25 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
                 return True
             return False
 
+    def get_nchannels(self, file_info : COMAPData) -> int:
+        """
+        Get the number of channels in the data 
+        """
+        with h5py.File(file_info.level2_path, 'r') as f:
+            return f[self.target_tod_datasets[0]].shape[2] 
+
     def run(self, file_info : COMAPData) -> None:
         """ """
 
-        if self.already_processed(file_info):
+        if self.already_processed(file_info) and not self.overwrite:
             return
+        
+        self.nchannels = self.get_nchannels(file_info)
 
         statistics = self.fit_statistics(file_info)
         self.save_statistics(file_info, statistics) 
-        if self.plot: 
-            self.plot_statistics(file_info)
+        #if self.plot: 
+        #    self.plot_statistics(file_info)
 
     def plot_statistics(self, file_info : COMAPData) -> None:
         """
@@ -246,17 +275,52 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
         fig.savefig(os.path.join(self.output_dir, f'{file_info.obsid}_noise_stats.png'))
         pyplot.close(fig)
 
-    def save_statistics(self, file_info : COMAPData, statistics : dict) -> None:
+    def save_statistics(self, file_info : COMAPData, all_statistics : dict) -> None:
         """ """
 
+        # Store them in the level 2 file
         with h5py.File(file_info.level2_path, 'a') as f:
-            for key in statistics:
-                if self.output_group_name not in f:
-                    f.create_group(self.output_group_name)
-                grp = f[self.output_group_name]
-                if key in grp:
-                    del grp[key]
-                grp.create_dataset(f'{key}', data=statistics[key])
+            for dataset_name, statistics in all_statistics.items():
+                dataset_name = dataset_name.split('/')[-1]
+                for key in statistics:
+                    output_group_name = f'{self.output_group_name}/{dataset_name}'
+                    if output_group_name not in f:
+                        f.create_group(output_group_name)
+                    grp = f[output_group_name]
+                    if key in grp:
+                        del grp[key]
+                    grp.create_dataset(f'{key}', data=statistics[key])
+
+        # BUT WAIT! We also store them in the database 
+        key2sql_map = {('binned_data', 'sigma_white'): 'unfiltered_white_noise',
+                       ('binned_data', 'sigma_red'): 'unfiltered_red_noise',
+                       ('binned_data', 'alpha'): 'unfiltered_noise_index',
+                       ('binned_data', 'auto_rms'): 'unfiltered_auto_rms',
+                       ('binned_filtered_data', 'sigma_white'): 'filtered_white_noise',
+                       ('binned_filtered_data', 'sigma_red'): 'filtered_red_noise',
+                       ('binned_filtered_data', 'alpha'): 'filtered_noise_index',
+                       ('binned_filtered_data', 'auto_rms'): 'filtered_auto_rms'}
+        for dataset_name, statistics in all_statistics.items():
+            stats_dict = {} # feed -> band -> stat 
+
+            for key, stat_data in statistics.items():
+                for feed in range(1, self.NFEEDS+1):
+                    for band in range(self.NBANDS*self.n_channels): 
+                        if feed not in stats_dict:
+                            stats_dict[feed] = {}
+                        if band not in stats_dict[feed]:
+                            stats_dict[feed][band] = {}
+                        key_name = key2sql_map[(dataset_name.split('/')[-1], key)]
+                        iband,ichannel = np.unravel_index(band, (self.NBANDS, self.n_channels))
+                        stats_dict[feed][band][key_name] = np.nanmean(stat_data[feed-1, iband,ichannel])
+                
+            for feed in stats_dict:
+                for band in stats_dict[feed]:
+                    db.update_quality_statistics(file_info.obsid,
+                                                 feed,
+                                                 band,
+                                                 stats_dict[feed][band])
+        
 
     def auto_rms(self, data : np.ndarray) -> float:
         """ """
@@ -264,42 +328,59 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
         rms = np.nanstd(data[:N:2]-data[1:N:2])/np.sqrt(2)
         return rms
     
-    def power_spectrum(self, data : np.ndarray) -> tuple:
+    def power_spectrum(self, data : np.ndarray, sample_frequency=50.0) -> tuple:
         """ """
         N = len(data)
         data_norm = data - np.nanmean(data)
-        data_norm = data * np.hanning(N)
+        #data_norm = data * np.hanning(N)
         Pk = np.fft.fft(data_norm)
         Pk = np.abs(Pk[:N//2])**2
         Pk = Pk / N
 
-        k = np.fft.fftfreq(N, d=1)
+        k = np.fft.fftfreq(N, d=1./sample_frequency)
         k = k[:N//2] 
 
-        return k[1:], Pk[1:]
+        # Bin the power spectrum in log-spaced bins 
+        N_bins = 100 
+        k_bin_edges = np.logspace(np.log10(k[1]), np.log10(k[-1]), N_bins+1)
+        k_bin_centers = 0.5 * (k_bin_edges[1:] + k_bin_edges[:-1])
+        weights = np.histogram(k, bins=k_bin_edges)[0]
+        Pk_binned = np.histogram(k, bins=k_bin_edges, weights=Pk)[0] / weights
+        mask = np.isfinite(Pk_binned)
+
+        return k_bin_centers[mask], Pk_binned[mask], weights[mask] #k[1:], Pk[1:]
     
-    def fnoise_fit(self, data : np.ndarray, auto_rms : float, k_ref : float = 1.0) -> tuple:
+    def model(self, k, sigma_white, sigma_red, alpha, k_ref=0.1):
+        return (sigma_red)**2 * np.abs(k/k_ref)**alpha + (sigma_white)**2
+
+    def fnoise_fit(self, data : np.ndarray, auto_rms : float, k_ref : float = 0.1, return_spectra=False) -> tuple:
         """
         Transform data to fourier spectrum and fit model:
         P(k) = sigma_white^2 + sigma_red^2 * (k/k_ref)^alpha
         """
 
-        k, Pk = self.power_spectrum(data)
+        k, Pk, Pk_weights = self.power_spectrum(data)
+        if len(Pk) == 0:
+            return (np.nan, np.nan, np.nan)
 
-        def model(k, sigma_white, sigma_red, alpha):
-            return (sigma_red/2.)**2 * np.abs(k/k_ref)**alpha + (sigma_white/2.)**2
-
+        ref_amp = np.mean(Pk[np.argmin(np.abs(k-k_ref))])**0.5
+        k_idx_high = np.argmin(np.abs(k-k_ref))+3 
+        k_idx_low = np.argmin(np.abs(k-k_ref))-3
         def chi2(params):
             sigma_white, sigma_red, alpha = params
-            return np.sum((np.log(Pk)- np.log(model(k, sigma_white, sigma_red, alpha)))**2)
+            return np.sum((np.log(Pk)- np.log(self.model(k, sigma_white, sigma_red, alpha, k_ref=k_ref)))**2*Pk_weights**0.5)
 
-        res = minimize(chi2, [auto_rms, 1e-3, -1.0], bounds=[(0, None), (0, None), (-4, 4)])
+        res = minimize(chi2, [auto_rms, ref_amp, -1.5], bounds=[(0, None), (0, None), (-4, 4)])
 
-        return res.x
+        if return_spectra:
+            return res.x, k, Pk
+        else:
+            return res.x
 
     def fit_statistics(self, file_info : COMAPData) -> dict:
         """ """                                        
 
+        all_statistics = {} 
         with h5py.File(file_info.level2_path,'r') as f:
             feeds = f['spectrometer/feeds'][:]
             scan_edges = f['level2/scan_edges'][...]
@@ -310,28 +391,31 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
                           'alpha':       np.zeros((self.NFEEDS, self.NBANDS, self.n_channels, n_scans)),
                           'auto_rms':    np.zeros((self.NFEEDS, self.NBANDS, self.n_channels, n_scans))}
 
-            for (ifeed, feed) in enumerate(feeds):
-                if feed == 20:
-                    continue 
+            for target_tod_dataset in self.target_tod_datasets:
+                for (ifeed, feed) in enumerate(feeds):
+                    if feed == 20:
+                        continue 
 
-                feed_data = f[self.target_tod_dataset][feed-1, ...]
-                indices = itertools.product(
-                    range(self.n_channels),
-                    range(self.NBANDS),
-                    enumerate(scan_edges)
-                )
-            
-                for ichannel, iband, (iscan, (scan_start, scan_end)) in tqdm(indices, total=self.n_channels*n_scans*self.NBANDS, desc=f'Feed {feed:02d}'):
-                    data = feed_data[iband, ichannel, scan_start:scan_end]
-                    if all(np.isnan(data)):
-                        print(f'SKIPPING FEED {feed} CHANNEL {ichannel}', np.sum(data))
-                        continue
-                    auto_rms = self.auto_rms(data)
-                    sigma_white, sigma_red, alpha = self.fnoise_fit(data, auto_rms) 
+                    feed_data = f[target_tod_dataset][feed-1, ...]
+                    indices = itertools.product(
+                        range(self.n_channels),
+                        range(self.NBANDS),
+                        enumerate(scan_edges)
+                    )
+                
+                    for ichannel, iband, (iscan, (scan_start, scan_end)) in tqdm(indices, total=self.n_channels*n_scans*self.NBANDS, desc=f'Feed {feed:02d}'):
+                        data = feed_data[iband, ichannel, scan_start:scan_end]
+                        if all(np.isnan(data)):
+                            print(f'SKIPPING FEED {feed} CHANNEL {ichannel}', np.sum(data))
+                            continue
+                        auto_rms = self.auto_rms(data)
+                        sigma_white, sigma_red, alpha = self.fnoise_fit(data, auto_rms) 
 
-                    statistics['sigma_white'][feed-1, iband, ichannel,iscan] = sigma_white
-                    statistics['sigma_red'][feed-1, iband, ichannel,iscan] = sigma_red
-                    statistics['alpha'][feed-1, iband, ichannel,iscan] = alpha
-                    statistics['auto_rms'][feed-1, iband, ichannel,iscan] = auto_rms
+                        statistics['sigma_white'][feed-1, iband, ichannel,iscan] = sigma_white
+                        statistics['sigma_red']  [feed-1, iband, ichannel,iscan] = sigma_red
+                        statistics['alpha']      [feed-1, iband, ichannel,iscan] = alpha
+                        statistics['auto_rms']   [feed-1, iband, ichannel,iscan] = auto_rms
 
-        return statistics
+                all_statistics[target_tod_dataset] = statistics
+
+        return all_statistics
