@@ -9,33 +9,40 @@ import numpy as np
 from scipy.linalg import solve 
 from tqdm import tqdm
 from itertools import product
-from modules.SQLModule.SQLModule import COMAPData, db 
+from modules.SQLModule.SQLModule import COMAPData
 from modules.utils.data_handling import read_2bit
 import h5py 
 from matplotlib import pyplot 
 import os 
+import logging
+import time
+from modules.pipeline_control.Pipeline import RetryH5PY, BaseCOMAPModule
 
-class AtmosphereInObservation:
+class AtmosphereInObservation(BaseCOMAPModule):
     """
     Class for fitting atmosphere 
     """
 
-    def __init__(self, plot=False, plot_dir='outputs/AtmosphereInObservation') -> None:
+    def __init__(self, plot=False, plot_dir='outputs/AtmosphereInObservation', overwrite=False) -> None:
         self.NFEEDS = 19
         self.NBANDS = 4
         self.NCHANNELS = 1024
 
         self.plot = plot
         self.plot_dir = plot_dir 
+        self.overwrite = overwrite
 
         self.target_tod_dataset = 'spectrometer/tod'
 
-    def already_processed(self, file_info : COMAPData) -> bool:
+    def already_processed(self, file_info : COMAPData, overwrite=False) -> bool:
         """
         Check if the atmosphere has already been fit for this observation 
         """
+
+        if overwrite:
+            return False
             
-        with h5py.File(file_info.level2_path, 'r') as lvl2: 
+        with RetryH5PY(file_info.level2_path, 'r') as lvl2: 
             if 'level2/atmosphere' in lvl2:
                 return True
             return False
@@ -45,22 +52,29 @@ class AtmosphereInObservation:
         Fit the atmosphere for a single observation 
         """
 
-        with h5py.File(file_info.level2_path,'r') as lvl2:
-            with h5py.File(file_info.level1_path,'r') as ds: 
+        with RetryH5PY(file_info.level2_path,'r') as lvl2:
+            with RetryH5PY(file_info.level1_path,'r') as ds: 
 
                 feeds = ds['spectrometer/feeds'][:] 
                 scan_edges = lvl2['level2/scan_edges'][...]
+                gains = lvl2['level2/vane/gain'][0,...]
+
                 n_scans = scan_edges.shape[0] 
                 atmos_offsets = np.zeros((self.NFEEDS, self.NBANDS, self.NCHANNELS, n_scans))
                 atmos_tau     = np.zeros((self.NFEEDS, self.NBANDS, self.NCHANNELS, n_scans))
-
+                print('NUMBER OF SCANS',n_scans)
                 for ifeed, feed in enumerate(tqdm(feeds,desc='Fit Atmosphere')): 
                     if feed == 20:
                         continue 
 
-                    feed_data = ds[self.target_tod_dataset][ifeed, ...]
-                    elevation = ds['spectrometer/pixel_pointing/pixel_el'][ifeed,...]
-                    gain = lvl2['level2/vane/gain'][0,ifeed,...]
+                    
+                    feed_data = RetryH5PY.read_dset(ds['spectrometer/tod'], [slice(ifeed, ifeed+1), slice(None), slice(None),slice(None)],lock_file_directory=self.lock_file_path)[0,...]
+                    #feed_data = ds[self.target_tod_dataset][ifeed, ...]
+                    #elevation = ds['spectrometer/pixel_pointing/pixel_el'][ifeed,...]
+                    elevation = RetryH5PY.read_dset(ds['spectrometer/pixel_pointing/pixel_el'], [slice(ifeed, ifeed+1), slice(None)], delay=1,lock_file_directory=self.lock_file_path).flatten()
+
+                    gain = gains[ifeed]#lvl2['level2/vane/gain'][0,ifeed,...]
+
 
                     # Reshape arrays to handle all bands and channels at once
                     data = feed_data / gain[...,np.newaxis]
@@ -72,8 +86,12 @@ class AtmosphereInObservation:
                     )
                 
                     for iband, ichannel, (iscan, (scan_start, scan_end)) in tqdm(indices, total=self.NBANDS*self.NCHANNELS*n_scans, desc='Fit Atmosphere'):
+
                         data = feed_data[iband, ichannel, scan_start:scan_end]/gain[iband, ichannel]
                         el   = np.radians(elevation[scan_start:scan_end])
+                        # Need to check if the elevation is changing too
+                        el_change = np.abs(np.max(el) - np.min(el))
+
                         if all(np.isnan(data)):
                             continue
                         mask = np.isfinite(data) & np.isfinite(el) 
@@ -81,10 +99,19 @@ class AtmosphereInObservation:
                         el = el[mask]
                         if data.size == 0:
                             continue
+
+                        if el_change < np.radians(0.2):
+                            atmos_offsets[feed-1,iband,ichannel,iscan] = np.nanmedian(data) # just store offset if no variations. 
+                            continue
+
                         # Fit the atmosphere 
                         A = np.ones((el.size,2))
                         A[:,1] = 1./np.sin(el)
-                        atmos_offsets[feed-1,iband,ichannel,iscan], atmos_tau[feed-1,iband,ichannel,iscan] = solve(A.T@A, A.T@data)  
+                        try:
+                            atmos_offsets[feed-1,iband,ichannel,iscan], atmos_tau[feed-1,iband,ichannel,iscan] = solve(A.T@A, A.T@data)  
+                        except np.linalg.LinAlgError:
+                            logging.error(f'Failed to fit atmosphere for feed {feed}, band {iband}, channel {ichannel}, scan {iscan}')
+                            continue
                     
         return atmos_offsets, atmos_tau
 
@@ -93,7 +120,7 @@ class AtmosphereInObservation:
 
         os.makedirs(self.plot_dir, exist_ok=True)
 
-        with h5py.File(file_info.level1_path, 'r') as ds: 
+        with RetryH5PY(file_info.level1_path, 'r') as ds: 
             feeds = ds['/spectrometer/feeds'][...] 
             frequencies = ds['/spectrometer/frequency'][...].flatten() 
             freq_idx = np.argsort(frequencies)
@@ -152,7 +179,7 @@ class AtmosphereInObservation:
     def save_atmosphere(self, file_info : COMAPData, atmos_offsets : np.ndarray, atmos_tau : np.ndarray) -> None:
         """ Save atmosphere measurements to level 2 file """
 
-        with h5py.File(file_info.level2_path, 'a') as lvl2: 
+        with RetryH5PY(file_info.level2_path, 'a') as lvl2: 
             if not 'level2' in lvl2:
                 lvl2.create_group('level2')
             grp = lvl2['level2']
@@ -172,7 +199,7 @@ class AtmosphereInObservation:
         """
         Get the number of channels in the data 
         """
-        with h5py.File(file_info.level1_path, 'r') as f:
+        with RetryH5PY(file_info.level1_path, 'r') as f:
             return f[self.target_tod_dataset].shape[2] 
 
     def run(self, file_info : COMAPData) -> None:
@@ -180,11 +207,11 @@ class AtmosphereInObservation:
         Fit the atmosphere for a single observation 
         """
 
-        if self.already_processed(file_info):
+        if self.already_processed(file_info, self.overwrite):
             return
 
-        print('LEVEL1', file_info.level1_path)
-        print('LEVEL2', file_info.level2_path)
+        logging.info(f'LEVEL1  {file_info.level1_path}')
+        logging.info(f'LEVEL2 {file_info.level2_path}')
         self.NCHANNELS = self.get_nchannels(file_info)
 
         atmos_offsets, atmos_tau = self.fit_atmosphere(file_info) 
@@ -214,7 +241,7 @@ class AtmosphereFromVane:
         Check if the atmosphere has already been fit for this observation 
         """
             
-        with h5py.File(file_info.level2_path, 'r') as lvl2: 
+        with RetryH5PY(file_info.level2_path, 'r') as lvl2: 
             if 'level2/atmosphere_vane' in lvl2:
                 return True
             return False
@@ -224,8 +251,8 @@ class AtmosphereFromVane:
         Fit the atmosphere for a single observation 
         """
 
-        with h5py.File(file_info.level2_path,'r') as lvl2:
-            with h5py.File(file_info.level1_path,'r') as ds: 
+        with RetryH5PY(file_info.level2_path,'r') as lvl2:
+            with RetryH5PY(file_info.level1_path,'r') as ds: 
 
                 feeds = ds['spectrometer/feeds'][:] 
                 frequencies = ds['spectrometer/frequency'][:]
@@ -277,7 +304,7 @@ class AtmosphereFromVane:
 
         os.makedirs(self.plot_dir, exist_ok=True)
 
-        with h5py.File(file_info.level1_path, 'r') as ds: 
+        with RetryH5PY(file_info.level1_path, 'r') as ds: 
             feeds = ds['/spectrometer/feeds'][...] 
             frequencies = ds['/spectrometer/frequency'][...].flatten() 
             freq_idx = np.argsort(frequencies)
@@ -336,7 +363,7 @@ class AtmosphereFromVane:
     def save_atmosphere(self, file_info : COMAPData, atmos_offsets : np.ndarray, atmos_tau : np.ndarray) -> None:
         """ Save atmosphere measurements to level 2 file """
 
-        with h5py.File(file_info.level2_path, 'a') as lvl2: 
+        with RetryH5PY(file_info.level2_path, 'a') as lvl2: 
             if not 'level2' in lvl2:
                 lvl2.create_group('level2')
             grp = lvl2['level2']
@@ -355,7 +382,7 @@ class AtmosphereFromVane:
         """
         Get the number of channels in the data 
         """
-        with h5py.File(file_info.level1_path, 'r') as f:
+        with RetryH5PY(file_info.level1_path, 'r') as f:
             return f[self.target_tod_dataset].shape[2] 
 
     def run(self, file_info : COMAPData) -> None:

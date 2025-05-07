@@ -18,6 +18,7 @@ import toml
 from astropy.io.fits.header import Header
 import sys 
 from matplotlib import pyplot 
+from tqdm import tqdm
 
 from modules.utils import bin_funcs
 from modules.utils.median_filter import medfilt
@@ -49,22 +50,22 @@ class Level2Data_Nov2024:
     weight_map : np.ndarray = field(default_factory=np.empty(0,dtype=np.float32))  
     sky_map    : np.ndarray = field(default_factory=np.empty(0,dtype=np.float32))
     hits_map   : np.ndarray = field(default_factory=np.empty(0,dtype=np.float32))
-    pixels     : np.ndarray = field(default_factory=np.empty(0,dtype=np.int32)) 
+    pixels     : np.ndarray = field(default_factory=np.empty(0,dtype=np.int64)) 
     weights    : np.ndarray = field(default_factory=np.empty(0,dtype=np.float32))
     rhs        : np.ndarray = field(default_factory=np.empty(0,dtype=np.float32))
 
 
 class Level2DataReader_Nov2024: 
 
-    def __init__(self, tod_data_name : str = 'level2/binned_filtered_data') -> None:
+    def __init__(self, tod_data_name : str = 'level2/binned_filtered_data', offset_length : int = 100) -> None:
         self.tod_data_name = tod_data_name
 
 
         self.data_container = Level2Data_Nov2024
-        self.data_container.offset_length = 100
+        self.data_container.offset_length = offset_length
         self.data_container.rhs        = np.empty(0, dtype=np.float32)
         self.data_container.weights    = np.empty(0, dtype=np.float32)
-        self.data_container.pixels     = np.empty(0, dtype=np.int32)
+        self.data_container.pixels     = np.empty(0, dtype=np.int64)
         self.data_container.sum_map    = np.empty(0, dtype=np.float32)
         self.data_container.weight_map = np.empty(0, dtype=np.float32)
         self.data_container.hits_map   = np.empty(0, dtype=np.float32)
@@ -163,7 +164,7 @@ class Level2DataReader_Nov2024:
         self.data_container.weight_map = np.zeros((self.header['NAXIS2']*self.header['NAXIS1']), dtype=np.float32)
         self.data_container.hits_map   = np.zeros((self.header['NAXIS2']*self.header['NAXIS1']), dtype=np.float32)
 
-    def read_data(self, file: str,  band : int, channel : int, use_flags : bool = False, bad_feeds : list = []) -> tuple:
+    def read_data(self, file: str,  band : int, channel : int, database, use_flags : bool = False, bad_feeds : list = []) -> tuple:
 
         with h5py.File(file, 'r') as f:
             obsid = int(os.path.basename(file).split('-')[1])
@@ -173,9 +174,19 @@ class Level2DataReader_Nov2024:
             weights = []
             x   = [] 
             y   = [] 
+            if database: 
+                observer_flags = db.get_quality_flags(obsid)
+
             for ifeed, feed in enumerate(feeds): 
                 if feed in bad_feeds:
                     continue
+
+                if database: 
+                    if (feed, band) in observer_flags:
+                        if not observer_flags[(feed, band)].is_good:
+                            print(f'Feed {feed} is bad for band {band} in obsid {obsid}')
+                            logging.info(f'Feed {feed} is bad for band {band} in obsid {obsid}')
+                            continue
 
                 if use_flags:
                     scan_flags = db.query_scan_flags(obsid, feed, band) 
@@ -189,6 +200,9 @@ class Level2DataReader_Nov2024:
                     tod_temp -= np.nanmedian(tod_temp)
                     #tod_temp -= np.array(medfilt.medfilt(tod_temp*1, 1000))
                     #tod_temp[np.where(np.isnan(tod_temp))] = tod_temp[np.where(np.isnan(tod_temp))[0]-1]
+
+
+
                     if True:
                         sigma_red = f['level2_noise_stats/binned_filtered_data/sigma_red'][feed-1, band, channel, iscan] 
                         auto_rms  = f['level2_noise_stats/binned_filtered_data/auto_rms'][feed-1, band, channel, iscan]
@@ -217,7 +231,7 @@ class Level2DataReader_Nov2024:
                     y.append(dec) 
 
                     # check data 
-                    mask = np.isnan(tod[-1])
+                    mask = np.isnan(tod[-1]) | np.isnan(weights[-1])
                     tod[-1][mask] = 0 
                     weights[-1][mask] = 0
 
@@ -265,7 +279,7 @@ class Level2DataReader_Nov2024:
         mask = (ypix < 0) | (xpix < 0) | (xpix >= self.header['NAXIS1']) | (ypix >= self.header['NAXIS2'])
         xpix[mask] = 0
         ypix[mask] = 0
-        pixels = np.ravel_multi_index((ypix.astype(int), xpix.astype(int)), (self.header['NAXIS2'],self.header['NAXIS1'])).astype(np.int32)
+        pixels = np.ravel_multi_index((ypix.astype(int), xpix.astype(int)), (self.header['NAXIS2'],self.header['NAXIS1'])).astype(np.int64)
         pixels[mask] = -1
         return pixels
     
@@ -328,11 +342,11 @@ class Level2DataReader_Nov2024:
         model_sky_map[~nonzero] = 0     
         return model_sky_map
 
-    def accummulate_data(self, file: str, band : int, channel : int, use_flags : bool = True, bad_feeds : list = []) -> None:
+    def accummulate_data(self, file: str, band : int, channel : int, database, use_flags : bool = True, bad_feeds : list = []) -> None:
         """
         Read in the level 2 file and accumulate the data
         """
-        tod, weights, x, y = self.read_data(file, band, channel, use_flags=use_flags, bad_feeds=bad_feeds) 
+        tod, weights, x, y = self.read_data(file, band, channel, database, use_flags=use_flags, bad_feeds=bad_feeds) 
         if len(tod) == 0:
             return 
         x, y = self.coordinate_transform(x, y) 
@@ -388,7 +402,7 @@ class Level2DataReader_Nov2024:
 
             return n_tod
 
-    def read_files(self, files: list, band :int = 0, channel : int = 0, feeds : list = [f for f in range(1,20)], use_flags=False) -> None:
+    def read_files(self, files: list, database = None, band :int = 0, channel : int = 0, feeds : list = [f for f in range(1,20)], use_flags=False) -> None:
         """
         Read in the level 2 files
         """
@@ -407,13 +421,19 @@ class Level2DataReader_Nov2024:
             self._n_tod += n_tod
         self.data_container.tod    = np.zeros(self._n_tod, dtype=np.float32) 
         self.data_container.weights= np.zeros(self._n_tod, dtype=np.float32)
-        self.data_container.pixels = np.zeros(self._n_tod, dtype=np.int32)
+        self.data_container.pixels = np.zeros(self._n_tod, dtype=np.int64)
         self.data_container.rhs    = np.zeros(self._n_tod//self.data_container.offset_length, dtype=np.float32)
 
-        for file in files:
-            logging.info(f'Reading in file: {file}')
+        n_files = len(files)
+        logging.info(f'Total number of files: {n_files}')
+        n_file_reads = 0
+        for ifile, file in enumerate(files):
+            percent_done = ifile/float(n_files) * 100
+            if (percent_done - n_file_reads*10 > 10):
+                logging.info(f'File reading is {percent_done:.2f} % complete')
+                n_file_reads += 1
             print(f'Reading in file: {file}')
-            self.accummulate_data(file, self.band, self.channel, use_flags=use_flags, bad_feeds=bad_feeds) 
+            self.accummulate_data(file, self.band, self.channel, database, use_flags=use_flags, bad_feeds=bad_feeds) 
 
         comm.Barrier() 
 

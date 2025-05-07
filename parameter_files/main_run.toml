@@ -8,9 +8,14 @@ pipeline = [
     #'modules.DataAcquisition.DataCheckRemote.DataCheckRemote()',
     #'modules.DataAcquisition.DataAcquisition.DataAcquisition()',
     #'modules.DataAcquisition.DataAssess.DataAssess()',
-    #'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()',
-    'modules.MapMaking.MapMaking.MapMaking()',
+    'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()',
+    #'modules.MapMaking.MapMaking.LineMapMaking()',
+#    'modules.MapMaking.MapMaking.MapMaking()',
 ]
+
+[modules.MapMaking.MapMaking.LineMapMaking]
+
+config_file = 'parameter_files/level2_line_mapmaking.toml'
 
 [modules.MapMaking.MapMaking.MapMaking]
 
@@ -19,7 +24,8 @@ config_file = 'parameter_files/level2_mapmaking.toml'
 [modules.ProcessLevel2.ProcessLevel2.Level2Pipeline]
 
 config_file = 'parameter_files/level2_processing.toml'
-MIN_OBSID = 7000
+MIN_OBSID = 48210 
+#7000
 
 [modules.DataAcquisition.DataCheckRemote.DataCheckRemote]
 
@@ -31,7 +37,7 @@ sql_file_command = "select distinct l.obs_id, l.pixel, b.name band, p.diskname d
 presto_info = {host='comap_analysis@presto.caltech.edu', data_directory='/scr/comap/comapPathfinderLevel1/'}
 local_info  = {data_directory='/scratch/nas_core2/sharper/COMAP/data'}
 
-min_obsid_download = 45137
+min_obsid_download = 48210
 
 [modules.DataAcquisition.DataAcquisition.DataAcquisition]
 
@@ -41,7 +47,7 @@ local_info  = {data_directory='/scratch/nas_core2/sharper/COMAP/data'}
 
 n_rsyncs = 2
 dry_run = false
-min_obsid_download = 45137 
+min_obsid_download = 48210 
 
 [modules.DataAcquisition.DataAssess.DataAssess]
 

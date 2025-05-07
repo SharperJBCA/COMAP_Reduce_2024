@@ -17,6 +17,9 @@ import numpy as np
 from modules.MapMaking.MapMakingModules.ReadData import Level2DataReader_Nov2024 
 from modules.MapMaking.MapMakingModules.Destriper import AxCOMAP, cgm
 from modules.utils import bin_funcs 
+from modules.pipeline_control.Pipeline import BadCOMAPFile, update_log_variable,setup_logging
+
+from modules.SQLModule.SQLModule import db, COMAPData, QualityFlag
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -32,12 +35,13 @@ def load_data(parameters):
     rank_start = rank * n_files_per_process
     rank_end   = (rank + 1) * n_files_per_process if rank < size - 1 else n_files 
 
-    local_data = Level2DataReader_Nov2024(tod_data_name=parameters['tod_data_name'])
+    local_data = Level2DataReader_Nov2024(tod_data_name=parameters['tod_data_name'], offset_length=parameters['offset_length'])
 
 
     local_data.setup_wcs(parameters['wcs_def'])
 
     if local_data.read_files([file_list[i] for i in range(rank_start, rank_end)],
+                             database=db,
                              band=parameters['band'],
                              channel=0,
                              use_flags=False, 
@@ -105,6 +109,9 @@ def main():
     args = parser.parse_args()
 
     parameters = toml.load(args.config_file) 
+    setup_logging(parameters['log_file_name'], prefix_date=False)
+    update_log_variable('Rank: {:02d}'.format(rank))
+    db.connect(parameters['database'])
 
     local_data = load_data(parameters) 
 

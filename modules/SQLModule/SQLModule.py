@@ -2,6 +2,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column, sessionmaker, declarative_base, relationship
 from typing import ClassVar 
 import os 
+from sqlalchemy import and_, or_
 
 # Create an enumerator class for GOOD/BAD FILES 
 class FileFlag: 
@@ -136,7 +137,7 @@ class QualityFlag(Base):
 #         weather_median_dew_point : Mapped[float] = mapped_column(nullable=True) 
 
 #     return COMAPFeed 
-
+    
 
 class SQLModule: 
 
@@ -145,17 +146,48 @@ class SQLModule:
 
     def connect(self, database_path : str) -> None:
         """
+        Set the database path, keeping this name for legacy reasons.
+
+        Actual connection made using _connect routine.
+        """
+        #self.database = sa.create_engine(f'sqlite:///{database_path}')
+        #self.session = sessionmaker(bind=self.database)() 
+        #Base.metadata.create_all(self.database)
+        self.database_path = database_path
+
+    def _connect(self) -> None:
+        """
         Connect to a SQL database
         """
-        self.database = sa.create_engine(f'sqlite:///{database_path}')
+        if self.database is None:
+            self.database = sa.create_engine(f'sqlite:///{self.database_path}')
+            Base.metadata.create_all(self.database)
         self.session = sessionmaker(bind=self.database)() 
-        Base.metadata.create_all(self.database)
+
 
     def disconnect(self) -> None:
+        """
+        Left for legacy reasons, using _disconnect instead. 
+        Remember, db is connected/disconnected in each method. 
+        """
+        pass
+
+    def _disconnect(self) -> None:
         """
         Disconnect from the SQL database
         """
         self.session.close() 
+
+    def _connect_and_disconnect(self, func):
+        """
+        Decorator to connect and disconnect from the SQL database
+        """
+        def wrapper(*args, **kwargs):
+            self._connect()
+            result = func(*args, **kwargs)
+            self._disconnect()
+            return result
+        return wrapper
 
     def update_single_value(self, obsid: int, column_name: str, new_value: any) -> None:
         """
@@ -169,17 +201,21 @@ class SQLModule:
         Raises:
             ValueError: If the column name doesn't exist or obsid not found
         """
+        self._connect()
         # Check if column exists
         if column_name not in COMAPData.__table__.columns:
+            self._disconnect()
             raise ValueError(f"Column '{column_name}' does not exist in COMAPData table")
         
         # Check if obsid exists
-        if not self.obsid_exists(obsid):
+        if not self.obsid_exists(obsid, new_connection=False):
+            self._disconnect()
             raise ValueError(f"Observation {obsid} does not exist")
         
         # Update the value
         self.session.query(COMAPData).filter_by(obsid=obsid).update({column_name: new_value})
         self.session.commit()
+        self._disconnect()
 
     def insert_or_update_data(self, data: dict) -> None:
         """
@@ -190,7 +226,8 @@ class SQLModule:
             
         if 'obsid' not in data:
             raise ValueError("obsid is required for insert/update operations")
-        
+        self._connect()
+
         valid_keys = COMAPData.__table__.columns.keys()
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
             
@@ -216,6 +253,7 @@ class SQLModule:
                     self.session.add(flag)
 
         self.session.commit()
+        self._disconnect()
 
     def initialize_quality_flags(self, obsid: int) -> None:
         """
@@ -224,7 +262,8 @@ class SQLModule:
         # Check if observation exists
         if not self.obsid_exists(obsid):
             raise ValueError(f"Observation {obsid} does not exist")
-            
+        self._connect()
+
         # Get existing flags
         existing_flags = (self.session.query(QualityFlag)
                         .filter_by(obsid=obsid)
@@ -248,25 +287,28 @@ class SQLModule:
         if new_flags:
             self.session.bulk_save_objects(new_flags)
             self.session.commit()
-
+        self._disconnect()
 
     def delete_level2_data(self, obsid: int) -> None:
         """
         Delete level 2 data from the SQL database and also delete the file
         """
+        self._connect()
         level2_path = self.session.query(COMAPData).filter_by(obsid=obsid).first().level2_path
         if level2_path:
             os.remove(level2_path)
         self.session.query(COMAPData).filter_by(obsid=obsid).update({'level2_path': None})
         self.session.commit()
-
+        self._disconnect()
 
     def delete_data(self, obsid: int) -> None:
         """
         Delete data from the SQL database
         """
+        self._connect()
         self.session.query(COMAPData).filter_by(obsid=obsid).delete()
         self.session.commit()
+        self._disconnect()
 
     def query_data(self, obsid: int) -> dict:
         """
@@ -274,36 +316,49 @@ class SQLModule:
         """
         def remove_hidden(data):
             return {k: v for k, v in data.items() if not k.startswith('_')}
+        self._connect()
         data = self.session.query(COMAPData).filter_by(obsid=obsid).first()
+        self._disconnect()
         if data:
             return remove_hidden(data.__dict__)
         return {}
     
-    def obsid_exists(self, obsid: int) -> bool:
+    def obsid_exists(self, obsid: int, new_connection=True) -> bool:
         """
         Check if an observation ID exists in the SQL database
         """
-        return self.session.query(COMAPData.obsid).filter_by(obsid=obsid).scalar() is not None
+        if new_connection:
+            self._connect()
+        a = self.session.query(COMAPData.obsid).filter_by(obsid=obsid).scalar() is not None
+        if new_connection:
+            self._disconnect()
+        return a
     
     def query_all_obsids(self):
         """
         Query the SQL database for all observation IDs
         """
-        return [d.obsid for d in self.session.query(COMAPData.obsid).all()]
+        self._connect()
+        a = [d.obsid for d in self.session.query(COMAPData.obsid).all()]
+        self._disconnect()
+        return a
     
     def query_source_group_list(self, source_group: str, source: str = None, min_obsid=7000, max_obsid = 1000000, return_dict=True) -> dict:
         """
         Query the SQL database for a source group 
         """
+        self._connect()
 
-        query = self.session.query(COMAPData).filter_by(source_group=source_group)
+        query = self.session.query(COMAPData).filter(or_(COMAPData.source_group.like('Galactic'),COMAPData.source_group.like('Foreground'))) #filter_by(source_group=source_group)
         if source:
-            query = query.filter_by(source=source)
+            query = query.filter(and_(COMAPData.source.contains(source)))
 
         query = query.filter(COMAPData.obsid >= min_obsid)
         query = query.filter(COMAPData.obsid <= max_obsid)
 
         data = query.all()
+
+        self._disconnect()
 
         if return_dict:
             return {d.obsid: d.__dict__ for d in data}
@@ -317,13 +372,15 @@ class SQLModule:
         def remove_hidden(data):
             return {k: v for k, v in data.items() if not k.startswith('_')}
         
+        self._connect()
         query = self.session.query(COMAPData).filter(COMAPData.obsid.in_(obsids))
         if source_group:
             query = query.filter_by(source_group=source_group)
         if source:
-            query = query.filter_by(source=source)
+            query = query.filter(and_(COMAPData.source.contains(source)))
         query = query.filter(COMAPData.obsid >= min_obsid)
         data = query.all()
+        self._disconnect()
         if return_list:
             return data
 
@@ -336,16 +393,19 @@ class SQLModule:
         """
         Get a list of unprocessed files
         """
+        self._connect()
         query = self.session.query(COMAPData)
         if source_group:
             query = query.filter_by(source_group=source_group)
         if source:
-            query = query.filter_by(source=source)
+            query = query.filter(and_(COMAPData.source.like(source)))
+
         query = query.filter(COMAPData.obsid >= min_obsid)
 
-        if overwrite:
-            return query.all()
-        return query.filter_by(level2_path=None).all()
+        a = query.all()
+        self._disconnect()
+        return a
+        #return query.filter_by(level2_path=None).all()
 
     def add_quality_flags(self, obsid: int, flags: list[tuple[int, int, bool, str | None]]) -> None:
         """
@@ -355,29 +415,28 @@ class SQLModule:
             obsid: The observation ID
             flags: List of tuples (pixel, frequency_band, is_good, comment)
         """
-        for pixel, freq, is_good, comment in flags:
-            flag = QualityFlag(
-                obsid=obsid,
-                pixel=pixel,
-                frequency_band=freq,
-                is_good=is_good,
-                comment=comment
-            )
-            self.session.merge(flag)
-        self.session.commit()
+        self._connect()
+        # Check if observation exists
+        existing_flags = self.session.query(QualityFlag).filter_by(obsid=obsid).all()
+        existing_flags_dict = {(flag.pixel, flag.frequency_band): flag for flag in existing_flags}
 
-    # def get_quality_flags(self, obsid: int) -> dict[tuple[int, int], tuple[bool, str | None]]:
-    #     """
-    #     Get quality flags for an observation
-        
-    #     Returns:
-    #         Dictionary with (pixel, frequency_band) tuple as key and (is_good, comment) as value
-    #     """
-    #     flags = (self.session.query(QualityFlag)
-    #             .filter_by(obsid=obsid)
-    #             .all())
-    #     return {(flag.pixel, flag.frequency_band): (flag.is_good, flag.comment) for flag in flags}
-    
+        for pixel, freq, is_good, comment in flags:
+            if (pixel, freq) in existing_flags_dict:
+                flag = existing_flags_dict[(pixel, freq)]
+                flag.is_good = is_good
+                flag.comment = comment
+            else:
+                flag = QualityFlag(
+                    obsid=obsid,
+                    pixel=pixel,
+                    frequency_band=freq,
+                    is_good=is_good,
+                    comment=comment
+                )
+                self.session.add(flag)
+        self.session.commit()
+        self._disconnect()
+
     def get_quality_flags(self, obsid: int) -> dict[tuple[int, int], tuple[bool, str | None]]:
         """
         Get quality flags for an observation
@@ -385,29 +444,32 @@ class SQLModule:
         Returns:
             Dictionary with (pixel, frequency_band) tuple as key and (is_good, comment) as value
         """
+        self._connect()
         flags = (self.session.query(QualityFlag)
                 .filter_by(obsid=obsid)
                 .all())
+        self._disconnect()
         return {(flag.pixel, flag.frequency_band): flag for flag in flags}
-
 
     def get_bad_data_points(self, obsid: int) -> list[tuple[int, int, str | None]]:
         """
         Get all bad data points (pixel, frequency_band, comment) for an observation
         """
+        self._connect()
         bad_flags = (self.session.query(QualityFlag)
                     .filter_by(obsid=obsid, is_good=False)
                     .all())
+        self._disconnect()
         return [(flag.pixel, flag.frequency_band, flag.comment) for flag in bad_flags]
     
     def update_quality_flag_all(self, obsid: int, is_good: bool, comment: str = None) -> None:
         """
         Update all pixels/bands with the same quality flag
         """
-
+        self._connect()
         self.session.query(QualityFlag).filter_by(obsid=obsid).update({'is_good': is_good, 'comment': comment})
         self.session.commit()
-
+        self._disconnect()
 
     def update_quality_statistics(self, obsid: int, pixel: int, freq_band: int, stats: dict) -> None:
         """
@@ -430,6 +492,7 @@ class SQLModule:
                 - n_nan_values (int)
                 - mean_atm_temp (float)
         """
+        self._connect()
         # Get the existing flag
         flag = (self.session.query(QualityFlag)
             .filter_by(obsid=obsid, pixel=pixel, frequency_band=freq_band)
@@ -451,6 +514,7 @@ class SQLModule:
                 setattr(flag, key, value)
         
         self.session.commit()
+        self._disconnect()
 
     def update_quality_statistics_bulk(self, obsid: int, stats_list: list[dict]) -> None:
         """
@@ -465,6 +529,7 @@ class SQLModule:
                 - filtered_white_noise (float, optional)
                 ... etc for all statistics ...
         """
+        
         for stats in stats_list:
             pixel = stats.pop('pixel')
             freq_band = stats.pop('frequency_band')

@@ -17,6 +17,8 @@ import subprocess
 import toml
 from modules.pipeline_control.Pipeline import BadCOMAPFile
 from modules.SQLModule.SQLModule import QualityFlag, FileFlag
+from modules.pipeline_control.Pipeline import RetryH5PY
+from tqdm import tqdm
 
 def setup_logging(filename):
     """Setup the logging configuration for the pipeline"""
@@ -36,6 +38,8 @@ class Level2Pipeline:
             self.parameters = read_parameter_file(self.config_file) 
         else:
             self.parameters = {} 
+
+        self.target_obsid = self.parameters['Master'].get('target_obsid', None)
 
     def split_filelist(self, filelist: list, nprocess: int) -> list: 
         """
@@ -76,18 +80,6 @@ class Level2Pipeline:
                 #    print(f'Error processing level 2 file', file.level2_path)
                 #    sys.exit() 
 
-    def execute_parallel_mp(self, chunk_filelists: list, parameters: dict, base_delay: float = 2) -> None:
-        # Create a pool of workers
-        processes = []
-        for rank, filelist in enumerate(chunk_filelists):
-            p = mp.Process(target=self.process_files, args=(filelist, parameters, rank, base_delay))
-            processes.append(p)
-            p.start()
-        
-        # Wait for all processes to finish
-        for p in processes:
-            p.join()
-
     def write_filelist(self, filelist: list, directory:str, rank: int) -> None: 
         """write file list to text file"""
         
@@ -121,24 +113,56 @@ class Level2Pipeline:
             # Write the parameters to a temporary file
             self.write_parameters(parameters, '/tmp', rank)
             # Run the pipeline in a subprocess
-
+            
             command = ['python', f'{process_level2_dir}/run_level2_pipeline.py', f'/tmp/filelist_{rank:02d}.txt', f'/tmp/parameters_{rank:02d}.toml', str(rank), logging_file]
-            #print(' '.join(command))
+            print(' '.join(command))
             #command = ['which','python']
             process = subprocess.Popen(command, shell=False, cwd=working_dir, env=env, 
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-                                text=True)
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
+                                text=True,bufsize=1)
             processes.append(process)
-        for rank, process in enumerate(processes):
-            print(f"Checking process {rank}, status: {'Running' if process.poll() is None else 'Finished'}")
 
-            stdout, stderr = process.communicate()
-            print(f'stdout, rank:{rank:02d}',stdout)
-            print(f'stderr, rank:{rank:02d}',stderr)
-            print(f"Checking process {rank}, status: {'Running' if process.poll() is None else 'Finished'}")
+        completed = [False]*len(processes)
+        while not all(completed):
+            for i, process in enumerate(processes):
+                if completed[i]:
+                    continue
+                    
+                # Non-blocking poll to check if process has finished
+                return_code = process.poll()
+                if return_code is not None:
+                    # Process has completed
+                    completed[i] = True
+                    
+                    # # Collect output safely
+                    # stdout, stderr = '', ''
+                    # try:
+                    #     stdout, stderr = process.communicate(timeout=1)
+                    # except subprocess.TimeoutExpired:
+                    #     # In case communicate somehow still blocks, we'll catch the timeout
+                    #     process.kill()
+                    #     stdout, stderr = process.communicate()
+                    
+                    # print(f"Process {i} completed with return code {return_code}")
+                    # if stdout.strip():
+                    #     print(f"STDOUT from rank {i}:\n{stdout.strip()}")
+                    # if stderr.strip():
+                    #     print(f"STDERR from rank {i}:\n{stderr.strip()}")
+            
+            time.sleep(0.1)
+
+        # for rank, process in enumerate(processes):
+        #     process.wait()
+        #     print(f"Checking process {rank}, status: {'Running' if process.poll() is None else 'Finished'}")
+
+        #     stdout, stderr = process.communicate()
+        #     print(f'stdout, rank:{rank:02d}',stdout)
+        #     print(f'stderr, rank:{rank:02d}',stderr)
+        #     print(f"Checking process {rank}, status: {'Running' if process.poll() is None else 'Finished'}")
 
     def run(self):
         
+
         # Read in the pipeline configuration file
 
         # Setup logging
@@ -153,14 +177,48 @@ class Level2Pipeline:
 
         # Get the list of files to be processed 
         if not self.target_obsid:
+            print('hello')
             level1_filelist = db.get_unprocessed_files(source_group=target_source_group, source=target_source, min_obsid=self.MIN_OBSID, overwrite=True)
         else: 
             obsid = [self.target_obsid]
             fileinfo = db.query_obsid_list(obsid, return_dict=False)[obsid[0]]
             level1_filelist = [fileinfo]
 
+        print(len(level1_filelist), 'files to process')
+        
+        final_files = []
+        for fileinfo in tqdm(level1_filelist, desc='Checking Level 2 Files for file list'):
+            if fileinfo.level2_path is None: # Is the level 2 path in the database?
+                final_files.append(fileinfo)
+            else:
+                if not os.path.exists(fileinfo.level2_path): # Does the level 2 file exist?
+                    final_files.append(fileinfo)
+                else:
+                    with RetryH5PY(fileinfo.level2_path, 'r') as f:  # If the file exists, check if it has been processed
+                        if (not 'level2/binned_filtered_data' in f) or (self.parameters['modules']['ProcessLevel2']['GainFilterAndBin']['GainFilterAndBin']['GainFilterAndBin']['overwrite'] == True):
+                            final_files.append(fileinfo)
+                        
+        print(len(final_files), 'files to process')
+
+        print('-----')
+        print('Processing Level 2 Files for: {} {}'.format(target_source_group, target_source))
+        print('Number of files to process:',len(final_files))
+        print('-----')
+        print('ObsIDs to process:',[f.obsid for f in final_files])
         # Loop over the filelist and process each file
-        chunk_filelists = self.split_filelist(level1_filelist, self.parameters['Master']['nprocess'])
+        chunk_filelists = self.split_filelist(final_files, self.parameters['Master']['nprocess'])
+
+
+        for rank, filelist in enumerate(chunk_filelists):
+            print(f'Rank: {rank}, Number of files: {len(filelist)}')
+        
+        # Add master pid to parameters 
+        # Clear lock files 
+        lock_files_folder = f'/home/sharper/.COMAP_PIPELINE_LOCK_FILES/{os.getpid()}'
+        self.parameters['Master']['lock_files_folder'] = lock_files_folder
+        os.makedirs(lock_files_folder, exist_ok=True)
+        for filename in os.listdir(lock_files_folder):
+            os.remove(os.path.join(lock_files_folder, filename))
 
         # Run the pipeline in parallel
         self.execute_parallel_subprocess(chunk_filelists, self.parameters)

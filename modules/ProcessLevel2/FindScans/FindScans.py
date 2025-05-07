@@ -8,13 +8,13 @@ import numpy as np
 import h5py 
 from scipy.interpolate import interp1d
 import sys 
-from modules.SQLModule.SQLModule import COMAPData, db 
+from modules.SQLModule.SQLModule import COMAPData 
 from modules.ProcessLevel2.SystemTemperature.SystemTemperature import SystemTemperature
 from modules.utils.data_handling import read_2bit 
 
-from modules.pipeline_control.Pipeline import BadCOMAPFile
+from modules.pipeline_control.Pipeline import BadCOMAPFile, RetryH5PY,BaseCOMAPModule
 
-class FindScans:
+class FindScans(BaseCOMAPModule):
 
     def __init__(self, plot : bool = False, plot_dir : str = 'outputs/FindScans', scan_status_code : int = 1, overwrite : bool = False) -> None:
         self.plot = plot
@@ -29,7 +29,7 @@ class FindScans:
         if overwrite:
             return False
 
-        with h5py.File(file_info.level2_path,'r') as ds: 
+        with RetryH5PY(file_info.level2_path,'r') as ds: 
             if 'level2/scan_edges' in ds:
                 return True
             return False
@@ -39,12 +39,23 @@ class FindScans:
         Find the scan edges between each repointing of the telescope
         """
 
-        with h5py.File(file_info.level1_path,'r') as data: 
+        with RetryH5PY(file_info.level1_path,'r') as data: 
             scan_status = data['hk/antenna0/deTracker/lissajous_status'][...]
             scan_utc    = data['hk/antenna0/deTracker/utc'][...]
             scan_status_interp = interp1d(scan_utc,scan_status,kind='previous',bounds_error=False,
                                         fill_value='extrapolate')(data['spectrometer/MJD'][...])
+            
+            if file_info.source_group == 'SkyDip':
+                features = read_2bit(data['/hk/array/frame/features'][...])  
+                features_mjd = data['/hk/array/frame/utc'][...] 
+                mjd = data['spectrometer/MJD'][...] 
+                features = np.interp(mjd, features_mjd, features)
+                features[features < 8] = -1
+                scan_edges = SystemTemperature.find_contiguous_blocks(features, 8)
+                return scan_edges
+            
             if np.sum(scan_status) == 0:
+                # For none lissajous scans we use the features to find the scan edges. 
                 features = read_2bit(data['spectrometer/features'][...])
                 if len(np.unique(features)) <= 1:
                     raise BadCOMAPFile(file_info.obsid, "No valid features found in data file")
@@ -63,11 +74,25 @@ class FindScans:
                     scan_edges = SystemTemperature.find_contiguous_blocks(features, 10)
                 else:
                     scan_edges = None
+            elif not any([s == 1 for s in scan_status]):
+                # If the lissajous scan never scans (i.e., no status = 1) then skip this file. 
+                raise BadCOMAPFile(file_info.obsid, "No valid features found in data file")
             else:
+                # We use the lissajous_status to find scan edges for lissajous obs. 
                 scans = np.where((scan_status_interp == self.scan_status_code))[0]
                 diff_scans = np.diff(scans)
                 edges = scans[np.concatenate(([0],np.where((diff_scans > 1))[0], [scans.size-1]))]
-                scan_edges = np.array([edges[:-1],edges[1:]]).T
+                scan_edges_raw = np.array([edges[:-1],edges[1:]]).T
+                scan_edges = []
+                # Remove first 1000 and last 100 samples to avoid edge effects.
+                for start, end in scan_edges_raw: 
+                    start += 1000 
+                    end -= 100 
+                    if (end - start) < 100:
+                        continue
+                    else:
+                        scan_edges.append([start, end])
+                scan_edges = np.array(scan_edges)
 
         if isinstance(scan_edges, type(None)):
             print(file_info.obsid,np.unique(features))
@@ -80,7 +105,7 @@ class FindScans:
         Save the scan edges to the database 
         """
 
-        with h5py.File(file_info.level2_path,'a') as ds: 
+        with RetryH5PY(file_info.level2_path,'a') as ds: 
             if not 'level2' in ds:
                 ds.create_group('level2')
             grp = ds['level2']

@@ -10,10 +10,10 @@ import h5py
 from datetime import datetime
 from modules.SQLModule.SQLModule import COMAPData, db
 import logging 
-from modules.pipeline_control.Pipeline import BadCOMAPFile
+from modules.pipeline_control.Pipeline import BadCOMAPFile, RetryH5PY,BaseCOMAPModule
 
 
-class CreateLevel2File: 
+class CreateLevel2File(BaseCOMAPModule): 
 
     def __init__(self, output_dir : str = '', save_dir_structure : str = './',
                   level1_datasets : list = [], level1_attributes : list = []) -> None:
@@ -30,7 +30,7 @@ class CreateLevel2File:
         """
         if (file_info.level2_path is not None): # is it in the database?
             if os.path.exists(file_info.level2_path): # does the file exist?
-                with h5py.File(file_info.level2_path, 'r') as f: # has the data been copied over?
+                with RetryH5PY(file_info.level2_path, 'r') as f: # has the data been copied over?
                     if 'spectrometer' in f:
                         return True
         return False
@@ -47,7 +47,7 @@ class CreateLevel2File:
         corrupted = False
         datasets = []
         try:
-            with h5py.File(file_info.level2_path, 'r') as f:
+            with RetryH5PY(file_info.level2_path, 'r') as f:
                 def visit_handler(name, obj):
                     # Try to access attributes and data of each object
                     datasets.append(name)
@@ -111,13 +111,13 @@ class CreateLevel2File:
             raise BadCOMAPFile(file_info.obsid, f"File {file_info.level1_path} not found") 
         
         try: # Test the file can be opened too 
-            with h5py.File(file_info.level1_path, 'r') as f:
+            with RetryH5PY(file_info.level1_path, 'r') as f:
                 pass 
         except Exception as e:
             raise BadCOMAPFile(file_info.obsid, f"Error opening {file_info.level1_path}: {str(e)}")
 
-        with h5py.File(file_info.level1_path, 'r') as file_level1:
-            with h5py.File(level2_file, 'w') as file_level2:
+        with RetryH5PY(file_info.level1_path, 'r') as file_level1:
+            with RetryH5PY(level2_file, 'w') as file_level2:
                 for dset in self.level1_datasets:
                     scale = np.array([float(dset[1])])
                     try:

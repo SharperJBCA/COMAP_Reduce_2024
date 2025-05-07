@@ -42,14 +42,16 @@ def parse_function_string(function_str):
     
     if args_str:
         # Split arguments on commas and process each key-value pair
-        arg_pairs = args_str.split(',')
+        arg_pairs = args_str.split(', ')
         for pair in arg_pairs:
+            print(pair)
             if '=' not in pair:
                 raise ValueError("Invalid argument format")
             key, value = pair.split('=')
-
-            # Is the value in quotes? Then save as a string
-            if value.startswith('"') and value.endswith('"') or value.startswith("'") and value.endswith("'"):
+            if value[0] == '[':
+                value = value[1:-1].split(',')
+                value = [v.replace('"','').strip() for v in value]
+            elif value.startswith('"') and value.endswith('"') or value.startswith("'") and value.endswith("'"):
                 value = value[1:-1]
             else:
                 try:

@@ -4,37 +4,33 @@ log_file = 'logs/{}_main_run.log'
 
 sql_database = 'databases/COMAP_manchester.db'
 
-min_obsid = 20000#45200#
+min_obsid = 7000#45200#
 max_obsid = 101430#30000#
 #obsid_list = [45204, 45144, 45143, 45202, 45151]
 #source = 'fg4' #'TauA'
 #source_group = 'Foreground' #'Calibrator' # "Galactic"
 
 pipeline = [
-            #'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=0, wcs_def="M31", map_name="comap_fg4_dec2024_o100_gain_filter", tod_data_name="level2/binned_filtered_data")',
-            #'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=0, wcs_def="M31", map_name="comap_fg4_all_o100_gain_filter", tod_data_name="level2/binned_filtered_data")',
-            #'modules.MapMaking.MapMakingModules.CreateMapPerFeed.CreateMapPerFeed(band=0, wcs_def="M31", map_name="comap_fg4_gain_filter", tod_data_name="level2/binned_filtered_data"))',
-            'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=0, wcs_def="Perseus", source="fg7", source_group="Foreground", map_name="comap_fg7_original_from_2021_100325", tod_data_name="level2/binned_filtered_data")',
-            'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=1, wcs_def="Perseus", source="fg7", source_group="Foreground", map_name="comap_fg7_original_from_2021_100325", tod_data_name="level2/binned_filtered_data")',
-            'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=2, wcs_def="Perseus", source="fg7", source_group="Foreground", map_name="comap_fg7_original_from_2021_100325", tod_data_name="level2/binned_filtered_data")',
-            'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=3, wcs_def="Perseus", source="fg7", source_group="Foreground", map_name="comap_fg7_original_from_2021_100325", tod_data_name="level2/binned_filtered_data")',
-            #'modules.MapMaking.MapMakingModules.CreateMapPerFeed.CreateMapPerFeed(band=0, wcs_def="Perseus", map_name="comap_fg7_gain_filter", tod_data_name="level2/binned_filtered_data"))',
-
-            #'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=0, wcs_def="TauA", map_name="comap_TauA")',
-            #'modules.MapMaking.MapMakingModules.CreateMapPerFeed.CreateMapPerFeed(band=0, wcs_def="TauA", map_name="comap_TauA"))',
-            # 'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=1)',
-            # 'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=2)',
-            # 'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=3)', 
-            # 'modules.MapMaking.MapMakingModules.CreateMapPerFeed.CreateMapPerFeed(band=1)',
-            # 'modules.MapMaking.MapMakingModules.CreateMapPerFeed.CreateMapPerFeed(band=2)',
-            # 'modules.MapMaking.MapMakingModules.CreateMapPerFeed.CreateMapPerFeed(band=3)',
-            # 'modules.MapMaking.MapMakingModules.CreateMapEpoch.CreateMapEpoch(start="2022-06-01",band=0)', # az speed halved 
-            # 'modules.MapMaking.MapMakingModules.CreateMapEpoch.CreateMapEpoch(start="2021-06-01",end="2022-06-01,band=0)', # Replaced pixels 7,8, 2 and 13
-            # 'modules.MapMaking.MapMakingModules.CreateMapEpoch.CreateMapEpoch(end="2021-06-01",band=0)',
-            # 'modules.MapMaking.MapMakingModules.CreateMapSeasons.CreateMapSeasons(season="summer",band=0)',
-            # 'modules.MapMaking.MapMakingModules.CreateMapSeasons.CreateMapSeasons(season="winter",band=0)'
+            #'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=0, wcs_def="Galactic", source=["Field","fg6"], source_group="Galactic", map_name="comap_galactic_nofilter_070425", tod_data_name="level2/binned_data", database_file="databases/COMAP_manchester.db")',
+            #'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=0, wcs_def="Galactic", source="Field18", source_group="Galactic", map_name="comap_Field18_nofilter_070425", tod_data_name="level2/binned_data", database_file="databases/COMAP_manchester.db")',
+            #'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=0, wcs_def="Galactic", source="Field18", source_group="Galactic", map_name="comap_Field18_withfilter_070425", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db")',
+#            'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=0, wcs_def="Galactic", source="Field7%%", source_group="Galactic", map_name="comap_Field7%%_withfilter_070425", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db")',
+            'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=0, wcs_def="LDN1111", source="FG12%", source_group="Galactic", map_name="comap_fg12_withfilter_070425", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db")',
+#            'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=0, wcs_def="California", source="fg11%", source_group="Foreground", map_name="comap_fg11_withfilter_070425", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db")',
         ] 
 
+# _filtered
+
+[modules.MapMaking.MapMakingModules.CreateLineMap.CreateLineMap]
+
+output_dir = '/scratch/nas_core2/sharper/COMAP/level2_data_2024/level2_maps/all_feeds'
+
+wcs_def_file = 'parameter_files/wcs_definitions.toml'
+
+offset_length = 100 
+
+# Control feeds to be used using observer flags rather than this list. 
+feeds = [1,2,3,4,5,6,7,8,9,11,12,13,14,15,16,17,18,19]
 
 [modules.MapMaking.MapMakingModules.CreateMap.CreateMap]
 
@@ -44,13 +40,8 @@ wcs_def_file = 'parameter_files/wcs_definitions.toml'
 
 offset_length = 100 
 
-feeds = [1,4,5,6,8,9,11,12,13,15,16,17,18,19]
-# bad feeds = [2,3,7,10,14]
-# post_processing = [
-#                     'modules.MapMaking.MapMakingModules.PostProcessMap.RemoveBadPixels()',
-#                     'modules.MapMaking.MapMakingModules.PostProcessMap.UpdateHeader()',
-#                     'modules.MapMaking.MapMakingModules.PostProcessMap.UpdateDatabase()'
-#                 ]
+# Control feeds to be used using observer flags rather than this list. 
+feeds = [1,2,3,4,5,6,7,8,9,11,12,13,14,15,16,17,18,19]
 
 [modules.MapMaking.MapMakingModules.CreateMapDayNight.CreateMapDayNight]
 

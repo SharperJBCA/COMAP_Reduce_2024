@@ -21,8 +21,6 @@ import numpy as np
 import sys 
 from tqdm import tqdm 
 import h5py
-from modules.utils.data_handling import read_2bit 
-from modules.SQLModule.SQLModule import COMAPData
 
 from scipy.interpolate import interp1d
 from matplotlib import pyplot 
@@ -30,9 +28,18 @@ import os
 from matplotlib.lines import Line2D
 import logging
 
-from modules.pipeline_control.Pipeline import BadCOMAPFile
+try:
+    from modules.pipeline_control.Pipeline import BadCOMAPFile, RetryH5PY,BaseCOMAPModule
+    from modules.utils.data_handling import read_2bit 
+    from modules.SQLModule.SQLModule import COMAPData, db
+except ModuleNotFoundError:
+    from pathlib import Path
+    sys.path.append(str(Path(__file__).parent.parent.parent.parent))    
+    from modules.pipeline_control.Pipeline import BadCOMAPFile, RetryH5PY,BaseCOMAPModule
+    from modules.utils.data_handling import read_2bit 
+    from modules.SQLModule.SQLModule import COMAPData, db
 
-class SystemTemperature: 
+class SystemTemperature(BaseCOMAPModule): 
 
     def __init__(self, plot_vane : bool = False, plot_dir : str = '', plot_tsys : bool = True, overwrite=False) -> None:
         self.plot_vane = plot_vane
@@ -49,6 +56,8 @@ class SystemTemperature:
 
         self.overwrite = overwrite
 
+        self.lock_file_path = None
+
     def already_processed(self, file_info : COMAPData, overwrite : bool = False) -> bool:
         """
         Check if the system temperature has already been processed
@@ -59,7 +68,7 @@ class SystemTemperature:
         if not os.path.exists(file_info.level2_path):
             return False 
 
-        with h5py.File(file_info.level2_path, 'r') as ds: 
+        with RetryH5PY(file_info.level2_path, 'r') as ds: 
             if 'level2/vane' in ds:
                 return True 
         return False
@@ -72,7 +81,7 @@ class SystemTemperature:
 
         os.makedirs(self.plot_dir, exist_ok=True)
 
-        ds = h5py.File(file_info.level1_path,'r')
+        ds = RetryH5PY(file_info.level1_path,'r')
 
         antenna0_mjd = ds['/hk/antenna0/vane/utc'][...] - self.HK_SPEC_TIME_OFFSET/(24*3600.) # MJD 
         vane_angle = ds['/hk/antenna0/vane/angle'][...]/100. # degrees
@@ -198,7 +207,8 @@ class SystemTemperature:
         # Pair up start and end indices
         return list(zip(edges[::2], edges[1::2] - 1))
     
-    def get_vane_data(self, ds : h5py.File) -> np.ndarray:
+
+    def get_vane_data(self, ds) -> np.ndarray:
         """
         Get the vane data 
         """
@@ -231,7 +241,8 @@ class SystemTemperature:
         for i, (idx_start,idx_stop) in enumerate(tqdm(vane_edges,desc='Vane Events')):
             vane_angles.append(spec_angle[idx_start:idx_stop])
             min_vane = np.nanmin(spec_angle[idx_start:idx_stop])
-            tod = spec_tod[...,idx_start:idx_stop] 
+
+            tod = RetryH5PY.read_dset(spec_tod, [slice(None), slice(None), slice(None),slice(idx_start,idx_stop)],lock_file_directory=self.lock_file_path)
             vane_hot_idx = np.where((vane_angles[-1] < (min_vane + 4)))[0]
             vane_hots.append(np.nanmean(tod[...,vane_hot_idx], axis=-1))
             vane_cold_idx = np.where((vane_angles[-1] > self.VANE_ANGLE_LOW_CUTOFF))[0]
@@ -257,7 +268,7 @@ class SystemTemperature:
     def save_system_temperature(self, file_info : COMAPData, tsys : np.ndarray, gain : np.ndarray) -> None:
         """ Save the system temperature and gain to the level2 file """
 
-        with h5py.File(file_info.level2_path, 'a') as ds: 
+        with RetryH5PY(file_info.level2_path, 'a') as ds: 
             if not 'level2/vane' in ds:
                 ds.create_group('level2/vane')
             grp = ds['level2/vane']
@@ -274,7 +285,7 @@ class SystemTemperature:
 
         os.makedirs(self.plot_dir, exist_ok=True)
 
-        with h5py.File(file_info.level1_path, 'r') as ds: 
+        with RetryH5PY(file_info.level1_path, 'r') as ds: 
             feeds = ds['/spectrometer/feeds'][...] 
             frequencies = ds['/spectrometer/frequency'][...].flatten() 
             freq_idx = np.argsort(frequencies)
@@ -324,19 +335,46 @@ class SystemTemperature:
         pyplot.savefig(os.path.join(self.plot_dir, f'obs{file_info.obsid:08d}_gain.png'))
         pyplot.close()
 
+
+    def no_vane(self, file_info : COMAPData): 
+
+        with RetryH5PY(file_info.level1_path, 'r') as ds: 
+            features = read_2bit(ds['/hk/array/frame/features'][...])  
+
+            if np.any(features == self.VANE_FEATURE):
+                print('Vane feature found')
+                return False
+            else:
+                print('Vane feature not found')
+                return True
+
     def measure_system_temperature(self, file_info : COMAPData) -> None:
         """
         Measure the system temperature 
         """
 
-        with h5py.File(file_info.level1_path, 'r') as ds: 
+        if (file_info.source_group == 'SkyDip') and self.no_vane(file_info):
+            obsid = [file_info.obsid+1]
+            sys_file_info = db.query_obsid_list(obsid, return_dict=False)
+            if not obsid[0] in sys_file_info:
+                raise BadCOMAPFile(obsid[0], "No level 2 file found for sky dip")
+            sys_file_info = sys_file_info[obsid[0]]
+            if sys_file_info.level2_path is None:
+                raise BadCOMAPFile(obsid[0], "No level 2 file found for sky dip")
+            with RetryH5PY(sys_file_info.level2_path, 'r') as ds:
+                if not 'level2/vane' in ds:
+                    raise BadCOMAPFile(obsid[0], "No level 2 file found for sky dip")
+                tsys = ds['level2/vane/system_temperature'][...]
+                gain = ds['level2/vane/gain'][...]
             
-            T_h, vane_hots, vane_colds = self.get_vane_data(ds)
-
-            if isinstance(vane_hots, type(None)): # No vane events means we can't calibrate, skip observation. 
-                return 
-            tsys = self.calculate_system_temperature(T_h, vane_hots, vane_colds) 
-            gain = self.calculate_gain(T_h, vane_hots, vane_colds) 
+        else:
+            with RetryH5PY(file_info.level1_path, 'r') as ds: 
+                
+                T_h, vane_hots, vane_colds = self.get_vane_data(ds)
+                if isinstance(vane_hots, type(None)): # No vane events means we can't calibrate, skip observation. 
+                    return 
+                tsys = self.calculate_system_temperature(T_h, vane_hots, vane_colds) 
+                gain = self.calculate_gain(T_h, vane_hots, vane_colds) 
 
         self.save_system_temperature(file_info, tsys, gain)  
 
@@ -356,3 +394,13 @@ class SystemTemperature:
 
         if self.plot_vane:
             self.plot_vane_events(file_info) 
+
+
+if __name__ == "__main__": 
+    import matplotlib 
+    matplotlib.use('Agg')
+    db.connect(sys.argv[1])
+    filelist = db.query_obsid_list([int(sys.argv[2])], return_list=True, return_dict=False)
+    calibrator_fitting = SystemTemperature()
+    calibrator_fitting.run(filelist[0])
+    db.disconnect() 

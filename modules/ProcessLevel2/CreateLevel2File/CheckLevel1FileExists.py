@@ -5,9 +5,9 @@ import h5py
 from datetime import datetime
 from modules.SQLModule.SQLModule import COMAPData, db
 import logging 
-from modules.pipeline_control.Pipeline import BadCOMAPFile
+from modules.pipeline_control.Pipeline import BadCOMAPFile, RetryH5PY,BaseCOMAPModule
 
-class CheckLevel1FileExists:
+class CheckLevel1FileExists(BaseCOMAPModule):
 
     def __init__(self, **kwargs):
         pass 
@@ -20,7 +20,7 @@ class CheckLevel1FileExists:
         
         print('Can the file be opened?')
         try: # Test the file can be opened too 
-            with h5py.File(file_info.level1_path, 'r') as f:
+            with RetryH5PY(file_info.level1_path, 'r') as f:
                 pass
             print('Yes')
         except Exception as e:

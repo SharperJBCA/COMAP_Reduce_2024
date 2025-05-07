@@ -16,8 +16,9 @@ from modules.utils.linear_solver import AMatrixGainFilter
 from matplotlib import pyplot 
 
 from modules.ProcessLevel2.GainFilterAndBin.GainFilters import GainFilterBase 
+from modules.pipeline_control.Pipeline import RetryH5PY,BadCOMAPFile,BaseCOMAPModule
 
-class GainFilterAndBin: 
+class GainFilterAndBin(BaseCOMAPModule): 
 
     def __init__(self, end_cut=50, n_freq_bin=2, filtered_binned_data_name='binned_filtered_data', overwrite=False) -> None:
         # self.NCHANNELS = 1024
@@ -37,7 +38,7 @@ class GainFilterAndBin:
         if overwrite:
             return False
     
-        with h5py.File(file_info.level2_path, 'r') as ds: 
+        with RetryH5PY(file_info.level2_path, 'r') as ds: 
             if 'level2/binned_data' in ds:
                 return True
             return False
@@ -136,9 +137,9 @@ class GainFilterAndBin:
         median_system_temperature = np.nanmedian(system_temperature)
         mask = system_temperature > (median_system_temperature + self.system_temperature_cutoff)
 
-    def gain_filter_and_bin(self, file_info : COMAPData) -> np.ndarray:
-        with h5py.File(file_info.level2_path,'r') as lvl2:
-            with h5py.File(file_info.level1_path,'r') as ds: 
+    def gain_filter_and_bin(self, file_info : COMAPData, skip_feeds = [20]) -> np.ndarray:
+        with RetryH5PY(file_info.level2_path,'r') as lvl2:
+            with RetryH5PY(file_info.level1_path,'r') as ds: 
                 feeds = ds['spectrometer/feeds'][:] 
                 frequencies = ds['spectrometer/frequency'][:]
                 features  = read_2bit(ds['spectrometer/features'][...])
@@ -155,9 +156,11 @@ class GainFilterAndBin:
                 bandwidths = np.zeros((self.NFEEDS, self.NBANDS, self.n_freq_bin))
 
                 for ifeed, feed in enumerate(tqdm(feeds,desc='Gain Filter and Bin')): 
-                    if feed == 20:
+                    if feed in skip_feeds:
                         continue
-                    data = ds['spectrometer/tod'][ifeed,...,:] 
+                    #data = ds['spectrometer/tod'][ifeed,...,:] 
+                    data = RetryH5PY.read_dset(ds['spectrometer/tod'], [slice(ifeed, ifeed+1), slice(None), slice(None), slice(None)],lock_file_directory=self.lock_file_path)[0,...]
+
                     system_temperature = lvl2['level2/vane/system_temperature'][0,ifeed,...] 
                     gain = lvl2['level2/vane/gain'][0,ifeed,...]
 
@@ -170,11 +173,7 @@ class GainFilterAndBin:
                     try:
                         elevation = np.radians(lvl2['spectrometer/pixel_pointing/pixel_el'][ifeed,...])
                     except KeyError:
-                        print('KeyError: COMPONENT NOT FOUND line 171 GainFilterAndBin.py')
-                        print(file_info.level2_path)
-                        print(lvl2.keys())
-                        print(lvl2['spectrometer'].keys())
-                        sys.exit()
+                        raise BadCOMAPFile(file_info.obsid, 'Elevation not found in level 2 file')
                     for iscan, (scan_start, scan_end) in enumerate(scan_edges):
                         atmos_offsets = lvl2['level2/atmosphere/offsets'][ifeed,...,iscan]
                         atmos_tau = lvl2['level2/atmosphere/tau'][ifeed,...,iscan] 
@@ -197,7 +196,7 @@ class GainFilterAndBin:
         return binned_data, binned_filtered_data, central_freqs, bandwidths
 
     def save_data(self, file_info : COMAPData, binned_data : np.ndarray, binned_filtered_data : np.ndarray, central_freqs : np.ndarray, bandwidths : np.ndarray) -> None:
-        with h5py.File(file_info.level2_path, 'a') as ds:
+        with RetryH5PY(file_info.level2_path, 'a') as ds:
             if not 'level2' in ds:
                 ds.create_group('level2')
             grp = ds['level2']

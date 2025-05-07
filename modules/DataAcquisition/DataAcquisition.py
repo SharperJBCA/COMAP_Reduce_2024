@@ -130,7 +130,7 @@ class DataAcquisition:
 
         rsync_jobids = np.sort(np.mod(np.arange(filelist.size),num_rsyncs))
         chunks = np.array_split(np.arange(filelist.size), num_rsyncs)
-        base_command = 'rsync -rLptgoDvhz -e ssh {} {} --progress {}'
+        base_command = 'rsync -rLptgoDvhz -e ssh {} {} --progress {} --bwlimit=5000'
 
         def download_with_retry(remote_path, local_path, max_retries=2):
             """Download a single file with retries"""

@@ -5,6 +5,8 @@ from modules.utils import mean_filter, median_filter
 from multiprocessing import Pool
 import numpy as np
 from scipy.optimize import minimize
+from modules.pipeline_control.Pipeline import RetryH5PY
+import logging 
 
 def solve_timepoint(args):
     """
@@ -53,7 +55,9 @@ class GainFilterBase:
         n_tod = data.shape[-1]
 
         gain_solution = np.zeros(n_tod)
-        gain_solution[...] = self.gain_subtraction_fit(normed_data, system_temperature)
+        gain_temp = self.gain_subtraction_fit(normed_data, system_temperature)
+        if gain_temp.shape[0] == n_tod:
+            gain_solution[...] = gain_temp
 
         # Rescale the gain solution to the original data 
         gain_solution = gain_solution[np.newaxis, np.newaxis, :] * median_offsets[...,np.newaxis] #* auto_rms[..., np.newaxis]
@@ -90,7 +94,6 @@ class GainFilterBase:
         g_hat = (A^T A)^-1 A^T b 
         
         """
-        n = templates.shape[1]
         b = templates.T.dot(d) 
         A = templates.T.dot(templates)
 
@@ -102,7 +105,10 @@ class GainFilterBase:
         #q = np.zeros((1,d.shape[1]))
         #b = lb * P.T.dot(q) + b
         #A -= np.identity(A.shape[0])   
-        g = solve(A, b)
+        try:
+            g = solve(A, b)
+        except np.linalg.LinAlgError:
+            g = np.zeros_like(templates).T
 
         return g 
 
@@ -167,18 +173,17 @@ class GainFilterBase:
         templates    = templates.reshape(  (n_bands * n_channels, n_templates)) 
         data_reshape = data_normed.reshape((n_bands * n_channels, n_tod))
         if np.sum(bad_values) == bad_values.size:
-            print('All bad values')
-            print(system_temperature)
             return np.zeros(n_tod)
 
         not_zeros = np.sum(templates, axis=1) != 0  
         g = self.solve_gain_solution(data_reshape[not_zeros], templates[not_zeros])
 
         # subtract a linear fit
-        idx = np.arange(g.shape[1])
+        #idx = np.arange(g.shape[1])
         #g[2] -= np.polyval(np.polyfit(idx, g[2], 1), idx)
 
         if return_all:
             return g
         else:
+            #logging.info(f'Gain filter shape {g.shape}')
             return g[-1] # dG/G is in the 3rd template

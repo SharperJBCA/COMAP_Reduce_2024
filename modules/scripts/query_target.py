@@ -35,6 +35,7 @@ def main():
                         help='Maximum ObsID to query (default: None)')
     parser.add_argument('--min-obsid', type=int, default=None,
                         help='Minimum ObsID to query (default: None)')
+    parser.add_argument('--show-coordinates', action='store_true', default=False)
     parser.add_argument('--show-all', action='store_true', default=False)
     parser.add_argument('--show-path', action='store_true', default=False)
     parser.add_argument('--show-level2-path', action='store_true', default=False)
@@ -48,11 +49,11 @@ def main():
 
     if args.show_all:
         conditions = and_(COMAPData.source.contains(f'%{args.source}%'),
-                         or_(COMAPData.source_group.like('Foreground'), COMAPData.source_group.like('Galactic')))
+                         or_(COMAPData.source_group.like('Foreground'), COMAPData.source_group.like('Galactic'), COMAPData.source_group.like('Calibrator')))
     else:
         conditions = and_(COMAPData.source.contains(f'%{args.source}%'), 
                           COMAPData.level2_path.isnot(None),
-                         or_(COMAPData.source_group.like('Foreground'), COMAPData.source_group.like('Galactic')))
+                         or_(COMAPData.source_group.like('Foreground'), COMAPData.source_group.like('Galactic'), COMAPData.source_group.like('Calibrator')))
 
     # Query for observations matching criteria
     observations = (db.session.query(COMAPData)
@@ -68,9 +69,11 @@ def main():
         
     # Prepare data for output
     table_data = []
+    has_level2_data_count = 0
     for obs in tqdm(observations):
         # Check if any pixel-band combination has statistics
         has_stats = False
+        has_level2_data = False 
         quality_flags = (db.session.query(QualityFlag)
                         .filter_by(obsid=obs.obsid)
                         .all())
@@ -83,12 +86,14 @@ def main():
 
         try:
             with h5py.File(obs.level1_path) as f:
-                #ra = f['spectrometer/pixel_pointing/pixel_ra'][0,0]
-                #dec = f['spectrometer/pixel_pointing/pixel_dec'][0,0]
-                # convert to galactic 
-                #c = SkyCoord(ra=ra, dec=dec, unit='deg', frame='icrs')
-                gl = 0 #c.galactic.l.deg
-                gb = 0 #c.galactic.b.deg
+
+                if args.show_coordinates:
+                    ra = f['spectrometer/pixel_pointing/pixel_ra'][0,0]
+                    dec = f['spectrometer/pixel_pointing/pixel_dec'][0,0]
+                    # convert to galactic 
+                    c = SkyCoord(ra=ra, dec=dec, unit='deg', frame='icrs')
+                    gl = c.galactic.l.deg
+                    gb = c.galactic.b.deg
 
                 utc_start = f['comap'].attrs['utc_start']
                 local_start_time = Time(datetime.strptime(utc_start, '%Y-%m-%d-%H:%M:%S'))
@@ -97,13 +102,12 @@ def main():
             continue 
 
         try:
-            has_level2_data = False 
             if obs.level2_path and os.path.exists(obs.level2_path):
                 with h5py.File(obs.level2_path) as f:
                     if 'level2/binned_filtered_data' in f:
+                        has_level2_data_count += 1
                         has_level2_data = True
         except (KeyError,OSError):
-            has_level2_data = False
             continue 
 
 
@@ -113,9 +117,10 @@ def main():
             obs.source_group,
             "Yes" if has_stats else "No",
             "Yes" if has_level2_data else "No",
-            gl,
-            gb
         ]
+        if args.show_coordinates:
+            output_info.append(gl)
+            output_info.append(gb)
         if args.show_path:
             output_info.append(obs.level1_path)
         if args.show_local_time:
@@ -128,7 +133,10 @@ def main():
     # Print results
     if table_data:
         print(f"\nFound {len(observations)} observations of {args.source} with Level2 data:")
-        headers = ["ObsID", "Source", "Source Group", "Has Stats", "Has Level2 Data", "GL", "GB"]
+        headers = ["ObsID", "Source", "Source Group", "Has Stats", "Has Level2 Data"]
+        if args.show_coordinates:
+            headers.append('GL')
+            headers.append('GB')
         if args.show_path:
             headers.append("Level1 Path")
         if args.show_local_time:
@@ -139,19 +147,22 @@ def main():
         print(tabulate(table_data, 
                       headers=headers,
                       tablefmt="grid"))
+        with open(f'{args.source}_obs.txt', 'w') as f:
+            f.write(tabulate(table_data, headers=headers, tablefmt="grid"))
     else:
         print(f"\nNo observations found for {args.source} with Level2 data")
 
     # Print summary
     total_obs = db.session.query(COMAPData).filter(and_(COMAPData.source.contains(f'%{args.source}%'),
                                                        or_(COMAPData.source_group.like('Foreground'), 
-                                                           COMAPData.source_group.like('Galactic')))).count()
+                                                           COMAPData.source_group.like('Galactic'),
+                                                           COMAPData.source_group.like('Calibrator')))).count()
     obs_with_stats = sum(1 for row in table_data if row[2] == "Yes")
     
     print(f"\nSummary:")
     print(f"Total observations of {args.source}: {total_obs}")
-    print(f"Observations with Level2 data: {len(observations)}")
-    print(f"Observations without Level2 data: {total_obs - len(observations)}")
+    print(f"Observations with Level2 data: {has_level2_data_count}")
+    print(f"Observations without Level2 data: {total_obs - has_level2_data_count}")
     print(f"Observations with noise statistics: {obs_with_stats}")
     print(f"Observations without noise statistics: {len(observations) - obs_with_stats}")
     db.disconnect()

@@ -16,8 +16,9 @@ from scipy.optimize import minimize
 import os 
 from modules.SQLModule.SQLModule import COMAPData, db
 from modules.utils.data_handling import read_2bit
+from modules.pipeline_control.Pipeline import RetryH5PY,BaseCOMAPModule
 
-class NoiseStatsLevel1:
+class NoiseStatsLevel1(BaseCOMAPModule):
 
     def __init__(self, plot=False, output_dir='outputs/NoiseStats') -> None:
         self.NCHANNELS = 1024
@@ -32,7 +33,7 @@ class NoiseStatsLevel1:
         """
         Check if the noise statistics have already been calculated for this file 
         """
-        with h5py.File(file_info.level2_path, 'r') as f:
+        with RetryH5PY(file_info.level2_path, 'r') as f:
             if 'level1_noise_stats' in f:
                 return True
             
@@ -40,7 +41,7 @@ class NoiseStatsLevel1:
         """
         Get the number of channels in the data 
         """
-        with h5py.File(file_info.level1_path, 'r') as f:
+        with RetryH5PY(file_info.level1_path, 'r') as f:
             return f[self.target_tod_dataset].shape[2] 
 
     def run(self, file_info : COMAPData) -> None:
@@ -62,7 +63,7 @@ class NoiseStatsLevel1:
         Each stat gets its own panel.  
         """
 
-        with h5py.File(file_info.level1_path, 'r') as f:
+        with RetryH5PY(file_info.level1_path, 'r') as f:
             frequency = f['spectrometer/frequency'][:].flatten()
             sort_freq = np.argsort(frequency)
             feeds = f['spectrometer/feeds'][:] 
@@ -89,7 +90,7 @@ class NoiseStatsLevel1:
     def save_statistics(self, file_info : COMAPData, statistics : dict) -> None:
         """ """
 
-        with h5py.File(file_info.level2_path, 'a') as f:
+        with RetryH5PY(file_info.level2_path, 'a') as f:
             for key in statistics:
                 if 'level1_noise_stats' not in f:
                     f.create_group('level1_noise_stats')
@@ -146,7 +147,7 @@ class NoiseStatsLevel1:
                         'auto_rms': np.zeros((self.NFEEDS, self.NBANDS, self.NCHANNELS))}
                                         
 
-        with h5py.File(file_info.level1_path,'r') as f:
+        with RetryH5PY(file_info.level1_path,'r') as f:
             feeds = f['spectrometer/feeds'][:]
             features  = read_2bit(f['spectrometer/features'][...])
             data_indices = np.where((features != -1) & (features != 13))[0] 
@@ -160,14 +161,16 @@ class NoiseStatsLevel1:
                 if feed == 20:
                     continue 
 
-                feed_data = f[self.target_tod_dataset][ifeed, ...]
+                #feed_data = f[self.target_tod_dataset][ifeed, ...]
+                feed_data = RetryH5PY.read_dset(f[self.target_tod_dataset], [slice(ifeed, ifeed+1), slice(None), slice(None), slice(None)],lock_file_directory=self.lock_file_path)[0,...]
 
                 indices = itertools.product(
                     range(self.NBANDS),
                     range(self.NCHANNELS)
                 )
             
-                for iband, ichannel in tqdm(indices, total=self.NBANDS*self.NCHANNELS, desc=f'Feed {feed:02d}'):
+                print(f'Stats for feed {feed}...')
+                for iband, ichannel in indices:#, total=self.NBANDS*self.NCHANNELS, desc=f'Feed {feed:02d}'):
                     data = feed_data[iband, ichannel, start_index:end_index]
                     if all(np.isnan(data)):
                         print(f'SKIPPING FEED {feed} BAND {iband} CHANNEL {ichannel}', np.sum(data))
@@ -211,7 +214,7 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
         """
         Check if the noise statistics have already been calculated for this file 
         """
-        with h5py.File(file_info.level2_path, 'r') as f:
+        with RetryH5PY(file_info.level2_path, 'r') as f:
             if self.output_group_name in f:
                 return True
             return False
@@ -220,7 +223,7 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
         """
         Get the number of channels in the data 
         """
-        with h5py.File(file_info.level2_path, 'r') as f:
+        with RetryH5PY(file_info.level2_path, 'r') as f:
             return f[self.target_tod_datasets[0]].shape[2] 
 
     def run(self, file_info : COMAPData) -> None:
@@ -241,7 +244,7 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
         Plot the four statistics as 1D plots vs. frequency for each feed.
         Each stat gets its own panel.  
         """
-        with h5py.File(file_info.level2_path, 'r') as f:
+        with RetryH5PY(file_info.level2_path, 'r') as f:
             statistics = {key: f[f'{self.output_group_name}/{key}'][...] for key in f[f'{self.output_group_name}'].keys()}
             frequency = f['level2/central_freqs'][0,...].flatten()
             sort_freq = np.argsort(frequency)
@@ -279,7 +282,7 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
         """ """
 
         # Store them in the level 2 file
-        with h5py.File(file_info.level2_path, 'a') as f:
+        with RetryH5PY(file_info.level2_path, 'a') as f:
             for dataset_name, statistics in all_statistics.items():
                 dataset_name = dataset_name.split('/')[-1]
                 for key in statistics:
@@ -381,7 +384,7 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
         """ """                                        
 
         all_statistics = {} 
-        with h5py.File(file_info.level2_path,'r') as f:
+        with RetryH5PY(file_info.level2_path,'r') as f:
             feeds = f['spectrometer/feeds'][:]
             scan_edges = f['level2/scan_edges'][...]
             n_scans = len(scan_edges) 

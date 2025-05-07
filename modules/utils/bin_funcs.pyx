@@ -4,11 +4,11 @@ from cpython cimport array
 import array
 cimport libc.math as cmath
 
-def bin_tod_to_map(float[:] sum_map, float[:] wei_map, float[:] hit_map, float[:] tod, float[:] weights, int[:] pixels):
+def bin_tod_to_map(float[:] sum_map, float[:] wei_map, float[:] hit_map, float[:] tod, float[:] weights, long[:] pixels):
 
-    cdef int i,j,k  
-    cdef int nsamples = pixels.size
-    cdef int binmax   = sum_map.size
+    cdef long i,j,k  
+    cdef long nsamples = pixels.size
+    cdef long binmax   = sum_map.size
     cdef float I
 
     for i in range(nsamples):
@@ -19,19 +19,19 @@ def bin_tod_to_map(float[:] sum_map, float[:] wei_map, float[:] hit_map, float[:
             hit_map[pixels[i]] += 1.0 
 
 
-def bin_tod_to_rhs(float[:] rhs, float[:] tod,  float[:] weights,  int offset_length):
+def bin_tod_to_rhs(float[:] rhs, float[:] tod,  float[:] weights,  long offset_length):
 
-    cdef int i
-    cdef int nsamples = tod.size
+    cdef long i
+    cdef long nsamples = tod.size
     # First bin the TOD into a map 
     for i in range(nsamples):
             rhs[i//offset_length] += tod[i]*weights[i]
 
-def subtract_sky_map_from_rhs(float[:] rhs,  float[:] weights, float[:] sky_map, int[:] pixels, int offset_length):
+def subtract_sky_map_from_rhs(float[:] rhs,  float[:] weights, float[:] sky_map, long[:] pixels, long offset_length):
     
-    cdef int i
-    cdef int nsamples = pixels.size
-    cdef int npixels = sky_map.size
+    cdef long i
+    cdef long nsamples = pixels.size
+    cdef long npixels = sky_map.size
     for i in range(nsamples):
         if (pixels[i] >= 0) & (pixels[i] < npixels):
             rhs[i//offset_length] -= sky_map[pixels[i]]*weights[i]
@@ -40,13 +40,13 @@ def subtract_sky_map_from_rhs(float[:] rhs,  float[:] weights, float[:] sky_map,
 def bin_offset_to_rhs(float[:] residuals, 
                       float[:] offsets, 
                       float[:] sky_map, 
-                      int[:] pixels, 
+                      long[:] pixels, 
                       float[:] weights,  
-                      int offset_length):
+                      long offset_length):
 
-    cdef int i
-    cdef int nsamples = pixels.size
-    cdef int npixels = sky_map.size
+    cdef long i
+    cdef long nsamples = pixels.size
+    cdef long npixels = sky_map.size
     for i in range(nsamples):
         if (pixels[i] >= 0) & (pixels[i] < npixels) & (weights[i]  != 0):
             residuals[i//offset_length] += weights[i]*(offsets[i//offset_length] - sky_map[pixels[i]])
@@ -55,13 +55,13 @@ def bin_offset_to_map(float[:] offsets,
                       float[:] sky_map, 
                       float[:] sum_map,
                       float[:] wei_map,
-                      int[:]   pixels, 
+                      long[:]   pixels, 
                       float[:] weights,  
-                      int offset_length):
+                      long offset_length):
 
-    cdef int i
-    cdef int nsamples = pixels.size
-    cdef int npixels  = sum_map.size
+    cdef long i
+    cdef long nsamples = pixels.size
+    cdef long npixels  = sum_map.size
     for i in range(nsamples):
         if (pixels[i] >= 0) & (pixels[i] < npixels) & (weights[i]  != 0):
             sum_map[pixels[i]] += offsets[i//offset_length]*weights[i]

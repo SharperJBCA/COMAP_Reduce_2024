@@ -14,11 +14,10 @@ pipeline = [#'modules.ProcessLevel2.CreateLevel2File.CreateRebinnedLevel1File.Cr
             'modules.ProcessLevel2.GainFilterAndBin.GainFilterAndBin.GainFilterAndBin()',
             'modules.ProcessLevel2.NoiseStats.NoiseStats.NoiseStatsLevel2()']
 
-nprocess = 6
+nprocess = 4
 
-source = 'fg7'
-source_group = 'Foreground'
-#target_obsid = 45141 
+#source = 'Field7%%' # Use Field15% for all Field150 to 159, for example. 
+source_group = 'Galactic'
 
 [modules.ProcessLevel2.CreateLevel2File.CheckLevel1FileExists.CheckLevel1FileExists]
 
@@ -31,26 +30,27 @@ output_dir = '/scratch/nas_core2/sharper/COMAP/data_level1_rebinned/'
 [modules.ProcessLevel2.FindScans.FindScans.FindScans]
 
 overwrite = true
-plot = true
+plot = false
 
 [modules.ProcessLevel2.Atmosphere.Atmosphere.AtmosphereInObservation]
 
-plot = true
+plot = false
+overwrite = false
 
 [modules.ProcessLevel2.NoiseStats.NoiseStats.NoiseStatsLevel1]
 
-plot = true 
+plot = false 
 
 [modules.ProcessLevel2.NoiseStats.NoiseStats.NoiseStatsLevel2]
 
-plot = true
+plot = false
 overwrite = false 
 target_tod_datasets=['level2/binned_filtered_data','level2/binned_data']
 
 [modules.ProcessLevel2.SystemTemperature.SystemTemperature.SystemTemperature]
 
 plot_vane = false 
-plot_tsys = true 
+plot_tsys = false 
 plot_dir = 'outputs/plots/SystemTemperature/'
 overwrite = false
 
