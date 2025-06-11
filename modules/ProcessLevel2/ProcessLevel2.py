@@ -6,6 +6,7 @@
 
 import os 
 import sys
+import numpy as np
 import logging 
 from modules.parameter_files.parameter_files import read_parameter_file
 import importlib
@@ -180,25 +181,29 @@ class Level2Pipeline:
             print('hello')
             level1_filelist = db.get_unprocessed_files(source_group=target_source_group, source=target_source, min_obsid=self.MIN_OBSID, overwrite=True)
         else: 
-            obsid = [self.target_obsid]
-            fileinfo = db.query_obsid_list(obsid, return_dict=False)[obsid[0]]
-            level1_filelist = [fileinfo]
+            if isinstance(self.target_obsid,str):
+                self.target_obsid = np.loadtxt(self.target_obsid, dtype=int).tolist()
+            fileinfo = db.query_obsid_list(self.target_obsid, return_dict=False)#[obsid[0]]
+            level1_filelist = [fileinfo[obsid] for obsid, v in fileinfo.items()] 
 
         print(len(level1_filelist), 'files to process')
         
-        final_files = []
-        for fileinfo in tqdm(level1_filelist, desc='Checking Level 2 Files for file list'):
-            if fileinfo.level2_path is None: # Is the level 2 path in the database?
-                final_files.append(fileinfo)
-            else:
-                if not os.path.exists(fileinfo.level2_path): # Does the level 2 file exist?
+        if self.parameters['Master']['force_run']:
+            final_files = level1_filelist
+        else:
+            final_files = []
+            for fileinfo in tqdm(level1_filelist, desc='Checking Level 2 Files for file list'):
+                if fileinfo.level2_path is None: # Is the level 2 path in the database?
                     final_files.append(fileinfo)
                 else:
-                    with RetryH5PY(fileinfo.level2_path, 'r') as f:  # If the file exists, check if it has been processed
-                        if (not 'level2/binned_filtered_data' in f) or (self.parameters['modules']['ProcessLevel2']['GainFilterAndBin']['GainFilterAndBin']['GainFilterAndBin']['overwrite'] == True):
-                            final_files.append(fileinfo)
+                    if not os.path.exists(fileinfo.level2_path): # Does the level 2 file exist?
+                        final_files.append(fileinfo)
+                    else:
+                        with RetryH5PY(fileinfo.level2_path, 'r') as f:  # If the file exists, check if it has been processed
+                            if (not 'level2/binned_filtered_data' in f) or (self.parameters['modules']['ProcessLevel2']['GainFilterAndBin']['GainFilterAndBin']['GainFilterAndBin']['overwrite'] == True):
+                                final_files.append(fileinfo)
                         
-        print(len(final_files), 'files to process')
+        print('TOTAL FILES', len(final_files), 'files to process')
 
         print('-----')
         print('Processing Level 2 Files for: {} {}'.format(target_source_group, target_source))
@@ -212,6 +217,7 @@ class Level2Pipeline:
         for rank, filelist in enumerate(chunk_filelists):
             print(f'Rank: {rank}, Number of files: {len(filelist)}')
         
+         
         # Add master pid to parameters 
         # Clear lock files 
         lock_files_folder = f'/home/sharper/.COMAP_PIPELINE_LOCK_FILES/{os.getpid()}'

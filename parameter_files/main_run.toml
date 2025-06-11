@@ -10,7 +10,7 @@ pipeline = [
     #'modules.DataAcquisition.DataAssess.DataAssess()',
     'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()',
     #'modules.MapMaking.MapMaking.LineMapMaking()',
-#    'modules.MapMaking.MapMaking.MapMaking()',
+    #'modules.MapMaking.MapMaking.MapMaking()',
 ]
 
 [modules.MapMaking.MapMaking.LineMapMaking]
@@ -24,7 +24,7 @@ config_file = 'parameter_files/level2_mapmaking.toml'
 [modules.ProcessLevel2.ProcessLevel2.Level2Pipeline]
 
 config_file = 'parameter_files/level2_processing.toml'
-MIN_OBSID = 48210 
+MIN_OBSID = 7000 
 #7000
 
 [modules.DataAcquisition.DataCheckRemote.DataCheckRemote]

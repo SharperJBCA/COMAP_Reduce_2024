@@ -16,7 +16,8 @@ from scipy.optimize import minimize
 import os 
 from modules.SQLModule.SQLModule import COMAPData, db
 from modules.utils.data_handling import read_2bit
-from modules.pipeline_control.Pipeline import RetryH5PY,BaseCOMAPModule
+from modules.pipeline_control.Pipeline import RetryH5PY,BaseCOMAPModule, BadCOMAPFile
+from modules.utils.median_filter import medfilt
 
 class NoiseStatsLevel1(BaseCOMAPModule):
 
@@ -49,6 +50,8 @@ class NoiseStatsLevel1(BaseCOMAPModule):
 
         if self.already_processed(file_info):
             return 
+        
+
 
         self.NCHANNELS = self.get_nchannels(file_info)
         statistics = self.fit_statistics(file_info) 
@@ -215,6 +218,8 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
         Check if the noise statistics have already been calculated for this file 
         """
         with RetryH5PY(file_info.level2_path, 'r') as f:
+            if self.overwrite:
+                return False
             if self.output_group_name in f:
                 return True
             return False
@@ -226,11 +231,23 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
         with RetryH5PY(file_info.level2_path, 'r') as f:
             return f[self.target_tod_datasets[0]].shape[2] 
 
+    def good_file(self, file_info : COMAPData) -> None:
+        """
+        Check if the file contains the target datasets 
+        """
+        with RetryH5PY(file_info.level2_path,'r') as f:
+            for dset in self.target_tod_datasets:
+                if dset not in f:
+                    raise BadCOMAPFile(file_info.obsid, f'{dset} not found in {file_info.level2_path}')
+
     def run(self, file_info : COMAPData) -> None:
         """ """
 
         if self.already_processed(file_info) and not self.overwrite:
             return
+        
+        # Check if the file is processed
+        self.good_file(file_info)
         
         self.nchannels = self.get_nchannels(file_info)
 
@@ -282,6 +299,7 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
         """ """
 
         # Store them in the level 2 file
+        print('======')
         with RetryH5PY(file_info.level2_path, 'a') as f:
             for dataset_name, statistics in all_statistics.items():
                 dataset_name = dataset_name.split('/')[-1]
@@ -292,6 +310,7 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
                     grp = f[output_group_name]
                     if key in grp:
                         del grp[key]
+                    print('saving',output_group_name,key,statistics[key].shape,statistics[key][0,0,0,0])
                     grp.create_dataset(f'{key}', data=statistics[key])
 
         # BUT WAIT! We also store them in the database 
@@ -334,7 +353,7 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
     def power_spectrum(self, data : np.ndarray, sample_frequency=50.0) -> tuple:
         """ """
         N = len(data)
-        data_norm = data - np.nanmean(data)
+        data_norm = data - np.nanmedian(data)
         #data_norm = data * np.hanning(N)
         Pk = np.fft.fft(data_norm)
         Pk = np.abs(Pk[:N//2])**2
@@ -380,7 +399,7 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
         else:
             return res.x
 
-    def fit_statistics(self, file_info : COMAPData) -> dict:
+    def fit_statistics(self, file_info : COMAPData, plot_data=False, save_fig_str=None) -> dict:
         """ """                                        
 
         all_statistics = {} 
@@ -389,12 +408,13 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
             scan_edges = f['level2/scan_edges'][...]
             n_scans = len(scan_edges) 
 
-            statistics = {'sigma_white': np.zeros((self.NFEEDS, self.NBANDS, self.n_channels, n_scans)),
-                          'sigma_red':   np.zeros((self.NFEEDS, self.NBANDS, self.n_channels, n_scans)),
-                          'alpha':       np.zeros((self.NFEEDS, self.NBANDS, self.n_channels, n_scans)),
-                          'auto_rms':    np.zeros((self.NFEEDS, self.NBANDS, self.n_channels, n_scans))}
 
             for target_tod_dataset in self.target_tod_datasets:
+                statistics = {'sigma_white': np.zeros((self.NFEEDS, self.NBANDS, self.n_channels, n_scans)),
+                            'sigma_red':   np.zeros((self.NFEEDS, self.NBANDS, self.n_channels, n_scans)),
+                            'alpha':       np.zeros((self.NFEEDS, self.NBANDS, self.n_channels, n_scans)),
+                            'auto_rms':    np.zeros((self.NFEEDS, self.NBANDS, self.n_channels, n_scans))}
+
                 for (ifeed, feed) in enumerate(feeds):
                     if feed == 20:
                         continue 
@@ -412,13 +432,51 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
                             print(f'SKIPPING FEED {feed} CHANNEL {ichannel}', np.sum(data))
                             continue
                         auto_rms = self.auto_rms(data)
+                        data_filtered = data - np.array(medfilt.medfilt(data*1, 50)) 
+                        fill_in = (np.abs(data_filtered) < 3*auto_rms) 
+                        data[~fill_in] = np.interp(np.where(~fill_in)[0], np.where(fill_in)[0], data[fill_in])
                         sigma_white, sigma_red, alpha = self.fnoise_fit(data, auto_rms) 
 
+                        if plot_data:
+                            if (iscan == 0) and (ichannel == 0) and (iband == 0) and ('filtered' in target_tod_dataset):
+                                try:
+                                    (_, _, _), k_nf, Pk_nf = self.fnoise_fit(f['level2/binned_data'][feed-1, iband, ichannel, scan_start:scan_end], auto_rms, return_spectra=True) 
+                                    (sigma_white, sigma_red, alpha), k, Pk = self.fnoise_fit(data, auto_rms, return_spectra=True) 
+                                    auto_rms_bad = self.auto_rms(f['level2/binned_data'][feed-1, iband, ichannel, scan_start:scan_end])
+                                except TypeError:
+                                    continue
+                                print('RATIO OF RMS', auto_rms, auto_rms_bad, auto_rms/auto_rms_bad)
+                                fig, axes = pyplot.subplots(2, 1, figsize=(12, 8))
+                                pyplot.sca(axes[0])
+                                pyplot.plot(k, Pk, label=f'Feed {feed} Band {iband} Channel {ichannel}') 
+                                pyplot.plot(k_nf, Pk_nf, label=f'No filter')
+                                print(f'Target dataset {target_tod_dataset}')
+                                print('Sigma white', sigma_white, 'sigma auto', auto_rms)
+                                print('NOISE RATIO ', (sigma_white - auto_rms)/sigma_white)   
+                                mdl = self.model(k, sigma_white, sigma_red, alpha)
+                                pyplot.plot(k, mdl, label=f'Model {feed} Band {iband} Channel {ichannel}')
+                                pyplot.axhline(sigma_white**2, color='k', ls='--', label='White Noise')
+                                pyplot.axhline(auto_rms**2, color='k', ls='-', label='Auto RMS')
+                                pyplot.axhline(sigma_red**2, color='r', ls='--', label='Red Noise')
+                                pyplot.axvline(0.1, color='r', ls='--', label='k_ref')
+
+                                pyplot.yscale('log')    
+                                pyplot.xscale('log')
+                                pyplot.ylim(5e-5,1e1)
+                                pyplot.legend(prop={'size': 8})
+                                pyplot.sca(axes[1])
+                                pyplot.plot(data-np.nanmedian(data)) 
+                                spikes = (np.abs(data - np.nanmedian(data)) > 5 * np.nanstd(data))
+                                t_temp = np.arange(data.size)
+                                #pyplot.plot(data_filtered)
+                                pyplot.plot(t_temp[spikes],data[spikes],'rx')
+                                if save_fig_str is not None:
+                                    pyplot.savefig(save_fig_str.format(feed=feed, band=iband, channel=ichannel,obsid=file_info.obsid))
+                                pyplot.show()
                         statistics['sigma_white'][feed-1, iband, ichannel,iscan] = sigma_white
                         statistics['sigma_red']  [feed-1, iband, ichannel,iscan] = sigma_red
                         statistics['alpha']      [feed-1, iband, ichannel,iscan] = alpha
                         statistics['auto_rms']   [feed-1, iband, ichannel,iscan] = auto_rms
-
                 all_statistics[target_tod_dataset] = statistics
-
+                
         return all_statistics

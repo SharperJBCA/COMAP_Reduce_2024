@@ -18,6 +18,7 @@ import importlib
 from tqdm import tqdm 
 import os 
 import sys 
+import numpy as np
 
 from modules.SQLModule.SQLModule import db, COMAPData
 from modules.parameter_files.parameter_files import read_parameter_file
@@ -75,20 +76,32 @@ class MapMaking:
             module = getattr(importlib.import_module(package), module)
             module = module(**args)
 
-            if isinstance(module.source, list):
-                final_files = []
-                for src in module.source:
-                    final_files+=get_file_list(target_source_group=module.source_group,
-                                                    target_source=src,
+            if 'min_obsid' in args:
+                min_obs_id = args['min_obsid']
+            if 'max_obsid' in args:
+                max_obs_id = args['max_obsid']
+
+            if obsid_list is not None:
+                if isinstance(obsid_list, str):
+                    obsid_list = np.loadtxt(obsid_list, dtype=int).tolist() 
+                
+                fileinfo = db.query_obsid_list(obsid_list, return_dict=False)
+                final_files = [fileinfo[obsid].level2_path for obsid, v in fileinfo.items()] 
+            else:
+                if isinstance(module.source, list):
+                    final_files = []
+                    for src in module.source:
+                        final_files+=get_file_list(target_source_group=module.source_group,
+                                                        target_source=src,
+                                                        min_obs_id=min_obs_id, 
+                                                        max_obs_id=max_obs_id, 
+                                                        obsid_list=obsid_list)
+                else:
+                    final_files = get_file_list(target_source_group=module.source_group, 
+                                                    target_source=module.source,
                                                     min_obs_id=min_obs_id, 
                                                     max_obs_id=max_obs_id, 
                                                     obsid_list=obsid_list)
-            else:
-                final_files = get_file_list(target_source_group=module.source_group, 
-                                                target_source=module.source,
-                                                min_obs_id=min_obs_id, 
-                                                max_obs_id=max_obs_id, 
-                                                obsid_list=obsid_list)
             # Execute the module
             module.run(final_files)
 

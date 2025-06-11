@@ -164,7 +164,7 @@ class ObserverFlags:
                 continue
                 
             # Determine range of observation IDs to update
-            obsid_range = range(obsid_start, obsid_end + 1) if obsid_end else [obsid_start]
+            # obsid_range = range(obsid_start, obsid_end + 1) if obsid_end else [obsid_start]
 
             
             self.db._connect()
@@ -214,8 +214,10 @@ class ObserverFlags:
                     {"is_good": False, "comment": "Observer Flag"}, 
                     synchronize_session=False
                 )
+                self.db.session.commit()
                 self.db._disconnect() 
                 total_updates += result
+
         print(f"Updated {total_updates} quality flags across {len(updates_by_obsid)} observations")
 
         

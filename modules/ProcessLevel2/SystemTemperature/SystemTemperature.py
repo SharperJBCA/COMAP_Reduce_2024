@@ -69,6 +69,11 @@ class SystemTemperature(BaseCOMAPModule):
             return False 
 
         with RetryH5PY(file_info.level2_path, 'r') as ds: 
+            if 'level2/vane/system_temperature' in ds:
+                if ds['level2/vane/system_temperature'].shape[0] == 0:
+                    return False
+                if ds['level2/vane/system_temperature'].shape[1] != ds['spectrometer/feeds'].shape[0]:
+                    return False
             if 'level2/vane' in ds:
                 return True 
         return False
@@ -375,6 +380,7 @@ class SystemTemperature(BaseCOMAPModule):
                     return 
                 tsys = self.calculate_system_temperature(T_h, vane_hots, vane_colds) 
                 gain = self.calculate_gain(T_h, vane_hots, vane_colds) 
+                print(gain.shape, tsys.shape, vane_hots.shape)
 
         self.save_system_temperature(file_info, tsys, gain)  
 

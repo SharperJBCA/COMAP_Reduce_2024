@@ -58,6 +58,7 @@ class AtmosphereInObservation(BaseCOMAPModule):
                 feeds = ds['spectrometer/feeds'][:] 
                 scan_edges = lvl2['level2/scan_edges'][...]
                 gains = lvl2['level2/vane/gain'][0,...]
+                print('GAINS SHAPE',gains.shape)
 
                 n_scans = scan_edges.shape[0] 
                 atmos_offsets = np.zeros((self.NFEEDS, self.NBANDS, self.NCHANNELS, n_scans))

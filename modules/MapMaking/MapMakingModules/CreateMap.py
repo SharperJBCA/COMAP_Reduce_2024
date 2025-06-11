@@ -22,7 +22,9 @@ class CreateMap:
                  feeds : list = [i for i in range(1,20)],
                  tod_data_name : str = 'level2/binned_filtered_data',
                  database_file : str = 'databases/COMAP_manchester.db',
-                 n_processes : int = 1) -> None:
+                 file_list_name : str = 'file_list.txt',
+                 sigma_red_cutoff : float = 0.4,
+                 n_processes : int = 1,**kwargs) -> None:
         logging.info("Initializing CreateMap")
 
         logger = logging.getLogger()
@@ -31,6 +33,7 @@ class CreateMap:
                 logging_file = handler.baseFilename
                 print(logging_file)
 
+        self.file_list_name = file_list_name
         self.map_name = map_name
         self.tod_data_name = tod_data_name
         self.band = band
@@ -48,8 +51,9 @@ class CreateMap:
                       'map_name': map_name,
                       'tod_data_name': tod_data_name,
                       'log_file_name':logging_file,
+                      'sigma_red_cutoff': sigma_red_cutoff,
                       'database':f'{ os.getcwd()}/{database_file}',
-                      'file_list': f'{ os.getcwd()}/modules/MapMaking/map_making_configs/file_list.txt',
+                      'file_list': f'{ os.getcwd()}/modules/MapMaking/map_making_configs/{file_list_name}',
                       'output_filename': f'{map_name}_band{band}_feed{"-".join([str(f) for f in feeds])}.fits',
                       'output_dir': output_dir}
         self.n_processes = n_processes

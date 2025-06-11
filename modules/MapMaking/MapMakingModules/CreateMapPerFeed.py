@@ -22,12 +22,12 @@ class CreateMapPerFeed(CreateMap):
     def run(self, file_list : list) -> None:
         logging.info("Running CreateMap")
         mapmaking_dir = Path(__file__).parent.parent.absolute()
-        working_dir = Path(__file__).parent.parent.parent.parent.absolute() #os.getcwd()
+        working_dir = os.getcwd()
         env = os.environ.copy()
         # Run mpirun from the MapMaking directory
         for feed in range(1,20):
             self.create_config_file(file_list, feeds=[feed], output_filename=f'{self.map_name}_band{self.band:02d}_feed{feed:02d}.fits') 
-            command = ['mpirun', '--verbose', '-n', str(self.n_processes), 'python', f'{mapmaking_dir}/run_map_making.py', f'{self.config_file}']
+            command = ['mpirun', '-n', str(self.n_processes), 'python', f'{mapmaking_dir}/run_map_making.py', f'{self.config_file}']
             print(' '.join(command))
             try:
                 result = subprocess.run(command, shell=False, cwd=working_dir, capture_output=True, text=True, env=env)

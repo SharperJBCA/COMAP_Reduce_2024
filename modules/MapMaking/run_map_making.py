@@ -28,22 +28,26 @@ size = comm.Get_size()
 def load_data(parameters):
     """Read in level 2 data for each process."""
 
-    file_list = np.loadtxt(parameters['file_list'], dtype=str)
+    file_list = np.loadtxt(parameters['file_list'], dtype=str,ndmin=1)
     n_files = len(file_list)
     print('NUMBER OF FILES:', n_files)
     n_files_per_process = n_files // size 
     rank_start = rank * n_files_per_process
     rank_end   = (rank + 1) * n_files_per_process if rank < size - 1 else n_files 
 
-    local_data = Level2DataReader_Nov2024(tod_data_name=parameters['tod_data_name'], offset_length=parameters['offset_length'])
+    local_data = Level2DataReader_Nov2024(tod_data_name=parameters['tod_data_name'], 
+                                          offset_length=parameters['offset_length'], 
+                                          sigma_red_cutoff=parameters['sigma_red_cutoff'],
+                                          band_index=parameters['band'])
 
+    band, channel = np.unravel_index(parameters['band'], (4,2))
 
     local_data.setup_wcs(parameters['wcs_def'])
 
     if local_data.read_files([file_list[i] for i in range(rank_start, rank_end)],
                              database=db,
-                             band=parameters['band'],
-                             channel=0,
+                             band=band,
+                             channel=channel,
                              use_flags=False, 
                              feeds=parameters['feeds']):
         return local_data

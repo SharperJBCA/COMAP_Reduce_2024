@@ -348,8 +348,12 @@ class SQLModule:
         Query the SQL database for a source group 
         """
         self._connect()
-
-        query = self.session.query(COMAPData).filter(or_(COMAPData.source_group.like('Galactic'),COMAPData.source_group.like('Foreground'))) #filter_by(source_group=source_group)
+        if source_group == 'SkyDip':
+            query = self.session.query(COMAPData).filter(COMAPData.source_group.like('SkyDip'))
+        elif source_group == 'Calibrator':
+            query = self.session.query(COMAPData).filter(COMAPData.source_group.like('Calibrator'))
+        else:
+            query = self.session.query(COMAPData).filter(or_(COMAPData.source_group.like('Galactic'),COMAPData.source_group.like('Foreground'))) #filter_by(source_group=source_group)
         if source:
             query = query.filter(and_(COMAPData.source.contains(source)))
 
