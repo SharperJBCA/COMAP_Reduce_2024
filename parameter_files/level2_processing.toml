@@ -15,14 +15,14 @@ pipeline = [#'modules.ProcessLevel2.CreateLevel2File.CreateRebinnedLevel1File.Cr
             'modules.ProcessLevel2.NoiseStats.NoiseStats.NoiseStatsLevel2()',
             'modules.ProcessLevel2.CalibratorFitting.CalibratorFitting.CalibratorFitting()']
 
-force_run = true
+force_run = false
 
 nprocess = 2
 
-source = 'TauA' # Use Field15% for all Field150 to 159, for example. 
-source_group = 'Calibrator'
+#source = 'fg4' #'Field%%%%%%%%%%%%' # Use Field15% for all Field150 to 159, for example. 
+source_group = 'Galactic' #'Galactic'
 
-#target_obsid = [16585]
+#target_obsid = [7483]
 #target_obsid = [18649]#'filelists/fg4_process_filelist_040625.txt'
     #16699, 16790, 16898, 16989, 17077, 17170, 17263, 19777, 20671, 20731, 20733, 20905, 20907, 21186, 21276, 21363, 21454, 21548, 21629, 21716, 21890, 22062, 22145, 22229, 22316, 22426, 22542, 22718, 22801, 22956, 23036, 23123, 23298, 23475, 23566, 23653, 23742, 23829, 23917, 24005, 24095, 24182, 24321, 24405, 24496, 24648, 24735, 24803, 24887, 24963, 25049, 25135, 25224, 25327, 25414, 25503, 25593, 25681, 25769, 25881, 26018, 26112]
 
@@ -98,4 +98,6 @@ level1_datasets = [['/spectrometer/MJD','1'],
 [modules.ProcessLevel2.GainFilterAndBin.GainFilterAndBin.GainFilterAndBin]
 
 n_freq_bin = 2
-overwrite = false
+overwrite = true
+filtered_binned_data_name = 'binned_filtered_data_with_prior'
+gain_filter_name = 'GainFilterWithPrior'

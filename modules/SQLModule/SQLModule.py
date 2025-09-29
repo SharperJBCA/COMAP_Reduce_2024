@@ -356,7 +356,7 @@ class SQLModule:
             query = self.session.query(COMAPData).filter(or_(COMAPData.source_group.like('Galactic'),COMAPData.source_group.like('Foreground'))) #filter_by(source_group=source_group)
         if source:
             query = query.filter(and_(COMAPData.source.contains(source)))
-
+        
         query = query.filter(COMAPData.obsid >= min_obsid)
         query = query.filter(COMAPData.obsid <= max_obsid)
 

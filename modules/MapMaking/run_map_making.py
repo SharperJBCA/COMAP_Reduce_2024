@@ -76,7 +76,7 @@ def create_maps(offset_map, local_data, parameters):
 
     mask = local_data.hits_map > lower_hit_bound
     rms_map[~mask] = np.nan
-    rms_map[mask] = np.sqrt(local_data.weight_map[mask])  
+    rms_map[mask] = np.sqrt(1./local_data.weight_map[mask])  
     
 
     destriped_map[~mask] = np.nan

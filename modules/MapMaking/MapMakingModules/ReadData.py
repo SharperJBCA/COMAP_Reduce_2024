@@ -57,6 +57,17 @@ class Level2Data_Nov2024:
     weights    : np.ndarray = field(default_factory=np.empty(0,dtype=np.float32))
     rhs        : np.ndarray = field(default_factory=np.empty(0,dtype=np.float32))
 
+###
+# QUICK CALIBRATION MODEL
+# Fitted taua_model_func to ratios of model TauA fluxes over observed fluxes for each feed/channel/band
+# saved npy file to : notebooks/source_fitting/TauA_best_fits.npy
+# best_period = 365.25 
+# best_phase = ~100 days this is fixed across all ratios.
+###
+def taua_model_func(times, phase, period, amplitude, grad, offset):
+    model = amplitude*np.sin(2*np.pi*(times - 59000 - phase)/period ) + grad*(times-59000)/365.25 + offset
+    return model
+
 
 class Level2DataReader_Nov2024: 
 
@@ -95,6 +106,7 @@ class Level2DataReader_Nov2024:
 
         self.planck_30_map = hp.read_map('/scratch/nas_cbassarc/sharper/work/CBASS_PolarisedTF/ancillary_data/planck_pr3/LFI_SkyMap_030-BPassCorrected_1024_R3.00_full.fits',verbose=False)
 
+        self.taua_calibration_factors = np.load('/scratch/nas_cbassarc/sharper/work/COMAP/COMAP_Reduce_2024/notebooks/source_fitting/TauA_best_fits.npy', allow_pickle=True).flatten()[0]
     @property
     def sum_map(self) -> np.ndarray:
         return self.data_container.sum_map
@@ -183,7 +195,7 @@ class Level2DataReader_Nov2024:
             weights = []
             x   = [] 
             y   = [] 
-
+            mjd0 = f['spectrometer/MJD'][0]
 
             if database: 
                 observer_flags = db.get_quality_flags(obsid)
@@ -198,31 +210,42 @@ class Level2DataReader_Nov2024:
                 #  sometimes we can get lucky and some scans seem good, but probably the noise is still too high and
                 #  we should just skip the whole obsid. 
                 sigma_reds_feed1 = f['level2_noise_stats/binned_filtered_data/sigma_red'][0, band, channel, :] 
-                if any([sigma_red > 1.0 for sigma_red in sigma_reds_feed1]):
+                if any([sigma_red > 5.0 for sigma_red in sigma_reds_feed1]):
                     print('SKIP')
                     break 
 
-                if database: 
-                    if (feed, band) in observer_flags:
-                        if not observer_flags[(feed, band)].is_good:
-                            print(f'Feed {feed} is bad for band {band} in obsid {obsid}')
-                            logging.info(f'Feed {feed} is bad for band {band} in obsid {obsid}')
-                            continue
+                # if database: 
+                #     if (feed, band) in observer_flags:
+                #         if not observer_flags[(feed, band)].is_good:
+                #             print(f'Feed {feed} is bad for band {band} in obsid {obsid}')
+                #             logging.info(f'Feed {feed} is bad for band {band} in obsid {obsid}')
+                #             continue
 
                 if use_flags:
                     scan_flags = db.query_scan_flags(obsid, feed, band) 
                 else:
                     scan_flags = np.ones(len(scan_edges), dtype=bool)
+
+                calibration_factors = self.taua_calibration_factors['model_fits'][feed-1, band, channel]
+                best_phase = self.taua_calibration_factors['best_phase']
+                best_period = self.taua_calibration_factors['best_period']
+                calibration_factor = taua_model_func(mjd0, best_phase, best_period, 
+                                                     calibration_factors[0],
+                                                     calibration_factors[1],
+                                                     calibration_factors[2])
+                if np.isnan(calibration_factor) | (calibration_factor < 0.3):
+                    continue
+
                 for ((iscan, scan_flag), (start, end)) in zip(enumerate(scan_flags),scan_edges):
                     #if scan_flag:
                     length = (end - start)//self.data_container.offset_length * self.data_container.offset_length
                     end = int(start + length)
-                    tod_temp = f[self.tod_data_name][feed-1, band, channel, start:end]  # _filtered
+                    tod_temp = f[self.tod_data_name][feed-1, band, channel, start:end]/ calibration_factor
                     tod_temp -= np.nanmedian(tod_temp)
 
                     if True:
-                        sigma_red = f['level2_noise_stats/binned_filtered_data/sigma_red'][feed-1, band, channel, iscan] 
-                        auto_rms  = f['level2_noise_stats/binned_filtered_data/auto_rms'][feed-1, band, channel, iscan]
+                        sigma_red = f['level2_noise_stats/binned_filtered_data/sigma_red'][feed-1, band, channel, iscan] /calibration_factor
+                        auto_rms  = f['level2_noise_stats/binned_filtered_data/auto_rms'][feed-1, band, channel, iscan] /calibration_factor
                         alphas    = f['level2_noise_stats/binned_filtered_data/alpha'][feed-1, band, channel, iscan]
 
                         if np.isnan(auto_rms):
@@ -232,12 +255,12 @@ class Level2DataReader_Nov2024:
                             continue
 
 
-                        if sigma_red > self.sigma_red_cutoff:
+                        if sigma_red > self.sigma_red_cutoff/calibration_factor:
                             continue
-                        if auto_rms > 1e-1:
-                            continue
+                        if auto_rms > 1e-1/calibration_factor:
+                           continue
                         #if alphas < -1.5:
-                        #    continue    
+                        #   continue    
 
                         weights_temp = np.ones_like(tod_temp)/ auto_rms**2
                         weights_temp[np.abs(tod_temp) > auto_rms*30 ] = 0
@@ -272,16 +295,22 @@ class Level2DataReader_Nov2024:
                     weights_temp[mask_nan] = 0
                     #tod_med_filt = np.array(medfilt.medfilt(tod_temp*1, 1000))
 
+
                     # Do a close filter to remove the spikes
                     fill_in = (np.abs(tod_temp) > 10*auto_rms) & (self.planck_30_map[hpx_pixels] < 0.04)
-                    tod_temp[fill_in] = 0
-                    weights_temp[fill_in] = 0
+                    tod_temp[fill_in] = 0.0
+                    weights_temp[fill_in] = 0.0
+
 
                     data_filtered = tod_temp - np.array(medfilt.medfilt(tod_temp*1, 100)) 
                     fill_in = (np.abs(data_filtered) > 5*auto_rms) & (self.planck_30_map[hpx_pixels] < 0.04)
                     fill_in = np.convolve(fill_in.astype(int), np.ones(201), mode='same') > 0
-                    tod_temp[fill_in] = 0
-                    weights_temp[fill_in] = 0
+                    tod_temp[fill_in] = 0.0
+                    weights_temp[fill_in] = 0.0
+
+                    if (np.sum(tod_temp==0)/ len(tod_temp)) > 0.95:
+                        continue
+
 
                     # print('PLOTTING',feed,band,channel,iscan,obsid)
                     # pyplot.plot(np.abs(data_filtered))
@@ -292,11 +321,11 @@ class Level2DataReader_Nov2024:
                     # pyplot.close() 
                     
                     #tod_temp[~fill_in] = np.interp(np.where(~fill_in)[0], np.where(fill_in)[0], tod_temp[fill_in])
-                    planck_mask = (self.planck_30_map[hpx_pixels] < 0.02) & np.isfinite(tod_temp) & (el > cut_el_low) & (el < cut_el_high) & (np.abs(tod_temp) < auto_rms*30) & (tod_temp != 0)
+                    planck_mask = (self.planck_30_map[hpx_pixels] < 0.025) & np.isfinite(tod_temp) & (el > cut_el_low) & (el < cut_el_high) & (np.abs(tod_temp) < auto_rms*30) & (tod_temp != 0)
 
 
                     # Don't want to apply this to constant el scans.
-                    if True:#(cut_el_high - cut_el_low) > 0.1:  
+                    if (cut_el_high - cut_el_low) > 0.1:  
                         time = np.arange(len(tod_temp))
                         try:
                             pmdl = np.poly1d(np.polyfit(time[planck_mask], tod_temp[planck_mask], 5)) 
@@ -311,9 +340,9 @@ class Level2DataReader_Nov2024:
                             continue
                         tod_temp -= pmdl(el) 
 
-                        planck_mask = (self.planck_30_map[hpx_pixels] < 0.02) & np.isfinite(tod_temp) & (az > cut_az_low) & (az < cut_az_high) & (np.abs(tod_temp) < auto_rms*30)
 
-                    if True:#(cut_el_high - cut_el_low) > 0.1:  
+                    if (cut_el_high - cut_el_low) > 0.1:  
+                        planck_mask = (self.planck_30_map[hpx_pixels] < 0.02) & np.isfinite(tod_temp) & (az > cut_az_low) & (az < cut_az_high) & (np.abs(tod_temp) < auto_rms*30)
                         try:
                             pmdl = np.poly1d(np.polyfit(az[planck_mask], tod_temp[planck_mask], 3)) 
                         except TypeError: # if there is no data to fit, we will skip this scan
@@ -331,6 +360,9 @@ class Level2DataReader_Nov2024:
 
                     mask_nan = np.isnan(tod_temp)  | np.isinf(tod_temp) | (tod_temp == 0)
 
+                    if np.nanmax(np.abs(tod_temp)) > 1e3:
+                        logging.info(f'Feed {feed} Band {band} Channel {channel} Scan {iscan} ObsID {obsid} has a large spike in the data, skipping')
+                        continue
                     tod.append(tod_temp)
                     weights.append(weights_temp)
                     x.append(gl)
@@ -340,17 +372,18 @@ class Level2DataReader_Nov2024:
                     tod[-1][mask_nan] = 0 
                     weights[-1][mask_nan] = 0
 
-                    weights[-1][(self.planck_30_map[hpx_pixels] > 0.04)] *= 1e-3 # weight down high signal areas to avoid biasing
+                    weights[-1][(self.planck_30_map[hpx_pixels] > 0.045)] *= 1e-1# weight down high signal areas to avoid biasing
 
                     # Flag turn arounds in az and el --- tend to have systematic gradients 
                     mask_az = (az < cut_az_low) | (az > cut_az_high)
                     weights[-1][mask_az] = 0 
                     tod[-1][mask_az] = 0 
 
+
                     if (cut_el_high - cut_el_low) > 0.1: # Don't want to apply this to constant el scans. 
-                        mask_el = (el < cut_el_low) | (el > cut_el_high)
-                        weights[-1][mask_el] = 0 
-                        tod[-1][mask_el] = 0
+                       mask_el = (el < cut_el_low) | (el > cut_el_high)
+                       weights[-1][mask_el] = 0 
+                       tod[-1][mask_el] = 0
                     if np.isnan(np.sum(weights[-1][tod[-1] != 0])):
                         print('NAN!')
                         print(np.sum(tod[-1][tod[-1] != 0]))
@@ -496,6 +529,7 @@ class Level2DataReader_Nov2024:
                                  self.data_container.weight_map, 
                                  self.data_container.hits_map, 
                                  tod, weights, pixels)
+        
         
         print('SUM TOD',np.sum(tod),np.sum(weights),np.sum(rhs), np.sum(self.data_container.sum_map),np.sum(self.data_container.weight_map))
         if np.isnan(np.sum(self.data_container.sum_map)):

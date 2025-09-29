@@ -46,7 +46,7 @@ def main():
     # Connect to database
     db = SQLModule()
     db.connect(args.database)
-
+    db._connect()
     if args.show_all:
         conditions = and_(COMAPData.source.contains(f'%{args.source}%'),
                          or_(COMAPData.source_group.like('Foreground'), COMAPData.source_group.like('Galactic'), COMAPData.source_group.like('Calibrator')))
@@ -70,6 +70,7 @@ def main():
     # Prepare data for output
     table_data = []
     has_level2_data_count = 0
+    level2_paths = [] 
     for obs in tqdm(observations):
         # Check if any pixel-band combination has statistics
         has_stats = False
@@ -110,7 +111,7 @@ def main():
         except (KeyError,OSError):
             continue 
 
-
+        level2_paths.append(obs.level2_path)
         output_info = [
             obs.obsid,
             obs.source,
@@ -166,6 +167,12 @@ def main():
     print(f"Observations with noise statistics: {obs_with_stats}")
     print(f"Observations without noise statistics: {len(observations) - obs_with_stats}")
     db.disconnect()
+
+    db._disconnect() 
+
+    with open(f'{args.source}_level2_paths.txt', 'w') as f:
+        for path in level2_paths:
+            f.write(path + '\n')
 
 if __name__ == "__main__":
     main()

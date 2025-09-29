@@ -107,7 +107,7 @@ class RetryH5PY:
         while retries < max_retries:
 
             lock_file_count = RetryH5PY.count_files_in_directory(f'{lock_file_directory}/')
-            if lock_file_count >= 2:
+            if lock_file_count >= 3:
                 print(f"Lock file count: {lock_file_count}, waiting...")
                 time.sleep(delay)
                 retries += 1

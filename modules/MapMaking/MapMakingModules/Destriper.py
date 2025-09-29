@@ -168,7 +168,6 @@ def cgm( Ax,
     if isinstance(x0,type(None)):
         x0 = np.zeros(Ax.data_object.n_offsets, dtype=np.float32)
         
-
     r  = Ax.data_object.rhs - A.matvec(x0)
     rb = Ax.data_object.rhs - A.matvec(x0)
     p  = r*1.
@@ -193,7 +192,6 @@ def cgm( Ax,
         
         beta = mpi_sum(r*rb)/rTrb
 
-        
         p = r + beta*p
         pb= rb+ beta*pb
         

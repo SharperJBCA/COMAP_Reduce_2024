@@ -20,6 +20,7 @@ import os
 import sys 
 import numpy as np
 
+
 from modules.SQLModule.SQLModule import db, COMAPData
 from modules.parameter_files.parameter_files import read_parameter_file
 
@@ -41,9 +42,13 @@ def get_file_list(target_source_group=None, target_source=None, min_obs_id=7000,
     # Check that level2/binned_filtered_data in each file 
     final_files = [] 
     for f in source_file_list:
-        with h5py.File(f, 'r') as h5:
-            if ('level2/binned_filtered_data' in h5) and ('level2_noise_stats/binned_filtered_data/auto_rms' in h5):
-                final_files.append(f) 
+        try:
+            with h5py.File(f, 'r') as h5:
+                if ('level2/binned_filtered_data' in h5) and ('level2_noise_stats/binned_filtered_data/auto_rms' in h5):
+                    final_files.append(f) 
+        except OSError:
+            logging.info(f'Could not open file: {f}')
+            continue
     
     return final_files
 

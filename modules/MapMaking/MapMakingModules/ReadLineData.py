@@ -24,6 +24,9 @@ from modules.utils import bin_funcs
 from modules.utils.median_filter import medfilt
 from modules.utils.Coordinates import h2e_full, comap_longitude, comap_latitude
 
+
+from modules.ProcessLevel2.GainFilterAndBin.GainFilters import GainFilterWithPrior 
+
 from mpi4py import MPI
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -76,6 +79,8 @@ class Level2LineDataReader_Nov2024:
         self.n_tod_per_file = []
 
         self._last_pixels_index = 0 
+
+        self.gain_filter = GainFilterWithPrior()
 
     @property
     def sum_map(self) -> np.ndarray:
@@ -232,39 +237,51 @@ class Level2LineDataReader_Nov2024:
                         mjd = f_lvl2['spectrometer/MJD'][start:end]
                         ra, dec = h2e_full(az, el, mjd, comap_longitude, comap_latitude)
 
-                        tod_temp = f_lvl1['spectrometer/tod'][ifeed, band, channel_start:channel_end, start:end]
-                        tod_lvl2 = f_lvl2['level2/binned_filtered_data'][ifeed, band, statistics_channel, start:end]
-                        tod_lvl2_no_filter = f_lvl2['level2/binned_data'][ifeed, band, statistics_channel, start:end]
-                        gain_filter = tod_lvl2_no_filter - tod_lvl2
-                        gain     = f_lvl2['level2/vane/gain'][0,ifeed,band,channel_start:channel_end] 
-                    
-                        # Calibrate the spectrum 
+                        tod_temp = f_lvl1['spectrometer/tod'][ifeed, band, :, start:end]
+                        # tod_lvl2 = f_lvl2['level2/binned_filtered_data'][ifeed, band, statistics_channel, start:end]
+                        # tod_lvl2_no_filter = f_lvl2['level2/binned_data'][ifeed, band, statistics_channel, start:end]
+                        # gain_filter = tod_lvl2_no_filter - tod_lvl2
+                        gain = f_lvl2['level2/vane/gain'][0,ifeed,band,:] 
+                        tsys = f_lvl2['level2/vane/system_temperature'][0,ifeed,band,:]
+                        # Calibrate the spectrum    
                         tod_temp = tod_temp / gain[:,None] 
-
+ 
 
 
                         # Fit the gain filter solution to each channel
-                        mask = np.isfinite(gain_filter)
-                        if not np.any(mask):
-                            continue
-                        if np.nansum(gain_filter) == 0:
-                            continue
+                        # mask = np.isfinite(gain_filter)
+                        # if not np.any(mask):
+                        #     continue
+                        # if np.nansum(gain_filter) == 0:
+                        #     continue
                         # Remove the atmosphere offsets and tau
-                        atmos_offsets = f_lvl2['level2/atmosphere/offsets'][ifeed,band,channel_start:channel_end,iscan]
-                        atmos_tau = f_lvl2['level2/atmosphere/tau'][ifeed,band,channel_start:channel_end,iscan] 
+                        atmos_offsets = f_lvl2['level2/atmosphere/offsets'][ifeed,band,:,iscan]
+                        atmos_tau = f_lvl2['level2/atmosphere/tau'][ifeed,band,:,iscan] 
+                        median_offsets = np.nanmedian(tod_temp, axis=1)
 
                         tod_temp[...] -= (atmos_offsets[...,np.newaxis] +\
                                                          atmos_tau[...,np.newaxis]/np.sin(np.radians(el)))
 
-                        for i in range(tod_temp.shape[0]): 
-                            tod_temp[i] -= np.median(tod_temp[i])
-                            pmdl = np.poly1d(np.polyfit(gain_filter[mask],tod_temp[i,mask], 1))
-                            tod_temp[i,mask] -= pmdl(gain_filter[mask])
+                        alpha = np.mean(alphas)
+                        sigma_red = np.mean(sigma_red) 
+                        feed = int(feed)
+                        
+                        residual, mask, gains = self.gain_filter(tod_temp[np.newaxis],
+                                                                  tsys[np.newaxis],
+                                                                  median_offsets[np.newaxis],
+                                                                  feed,
+                                                                  alpha=alpha,
+                                                                  sigma_red=sigma_red)
+
+                        # for i in range(tod_temp.shape[0]): 
+                        #     tod_temp[i] -= np.median(tod_temp[i])
+                        #     pmdl = np.poly1d(np.polyfit(gain_filter[mask],tod_temp[i,mask], 1))
+                        #     tod_temp[i,mask] -= pmdl(gain_filter[mask])
                         #    edges = [0,1,2,3,tod_temp.shape[0]-4,tod_temp.shape[0]-3,tod_temp.shape[0]-2,tod_temp.shape[0]-1]
                         #    pfit = np.poly1d(np.polyfit(edges, tod_temp[edges,i], 1))
                         #    tod_temp[:,i] -= pfit(np.arange(tod_temp.shape[0]))
                             
-
+                        tod_temp = residual[0,channel_start:channel_end,:]
                         print(tod_temp.shape, weights_temp.shape, ra.shape, dec.shape)
                         tod.append(tod_temp)
                         weights.append(weights_temp)
@@ -325,6 +342,13 @@ class Level2LineDataReader_Nov2024:
         x, y = self.coordinate_transform(x, y) 
         pixels = self.coords_to_pixels(x, y) 
         weights[:,pixels == -1] = 0
+        # pyplot.plot(np.nanmedian(tod,axis=0))
+        # pyplot.savefig('test.png')
+        # pyplot.close()
+        # pyplot.plot(np.nanmedian(weights,axis=0))
+        # pyplot.savefig('test_weights.png')
+        # import sys 
+        # sys.exit()
 
         for ifreq in range(line_segment_width):
             bin_funcs.bin_tod_to_map(self.data_container.sum_map[ifreq], 

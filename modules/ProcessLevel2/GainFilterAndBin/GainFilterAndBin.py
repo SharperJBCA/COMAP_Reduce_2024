@@ -15,12 +15,13 @@ from modules.SQLModule.SQLModule import COMAPData
 from modules.utils.linear_solver import AMatrixGainFilter
 from matplotlib import pyplot 
 
-from modules.ProcessLevel2.GainFilterAndBin.GainFilters import GainFilterBase 
+from modules.ProcessLevel2.GainFilterAndBin.GainFilters import GainFilterBase, GainFilterWithPrior
 from modules.pipeline_control.Pipeline import RetryH5PY,BadCOMAPFile,BaseCOMAPModule
 
 class GainFilterAndBin(BaseCOMAPModule): 
 
-    def __init__(self, end_cut=50, n_freq_bin=2, filtered_binned_data_name='binned_filtered_data', overwrite=False) -> None:
+    def __init__(self, end_cut=50, n_freq_bin=2, filtered_binned_data_name='binned_filtered_data', 
+                 gain_filter_name='GainFilterBase', overwrite=False, gain_filter_kwargs={}) -> None:
         # self.NCHANNELS = 1024
         self.NBANDS = 4
         self.NFEEDS = 19
@@ -29,7 +30,10 @@ class GainFilterAndBin(BaseCOMAPModule):
         self.system_temperature_cutoff = 10
         self.filtered_binned_data_name = filtered_binned_data_name
         self.overwrite = overwrite
-        self.gain_filter = GainFilterBase()
+
+        filter_classes = {'GainFilterBase': GainFilterBase,
+                          'GainFilterWithPrior': GainFilterWithPrior}
+        self.gain_filter = filter_classes.get(gain_filter_name, GainFilterBase)(**gain_filter_kwargs)
 
     def already_processed(self, file_info : COMAPData, overwrite : bool = False) -> bool:
         """
@@ -39,7 +43,7 @@ class GainFilterAndBin(BaseCOMAPModule):
             return False
     
         with RetryH5PY(file_info.level2_path, 'r') as ds: 
-            if 'level2/binned_data' in ds:
+            if f'level2/{self.filtered_binned_data_name}' in ds:
                 return True
             return False
 
@@ -137,6 +141,65 @@ class GainFilterAndBin(BaseCOMAPModule):
         median_system_temperature = np.nanmedian(system_temperature)
         mask = system_temperature > (median_system_temperature + self.system_temperature_cutoff)
 
+    def process_data(self, data : np.ndarray, 
+                     frequencies : np.ndarray, 
+                     system_temperature : np.ndarray, 
+                     atmos_offsets : np.ndarray, 
+                     atmos_tau : np.ndarray, 
+                     elevation : np.ndarray,
+                    scan_edges : np.ndarray,
+                    auto_rms : np.ndarray,
+                    feed : int,
+                    sigma_red, alpha) -> tuple:
+        """
+        Expects vane calibrated data and auto_rms values 
+
+        Data should be for a single feed only.
+
+        data - (band, channel, time)
+        frequencies - (band, channel)
+        system_temperature - (band, channel)
+        atmos_offsets - (band, channel, scan)
+        atmos_tau - (band, channel, scan)
+        elevation - (time)
+        scan_edges - [(scan_start, scan_end), scan]
+        auto_rms - (band, channel)
+        
+        """
+        median_offsets = []
+        # Subtract the best fit atmosphere model 
+        for iscan, (scan_start, scan_end) in enumerate(scan_edges):
+            median_offsets.append(np.nanmedian(data[...,scan_start:scan_end],axis=-1))
+            mdl_atmos = atmos_offsets[...,iscan,np.newaxis] +\
+                atmos_tau[...,iscan,np.newaxis]/np.sin(elevation[np.newaxis,np.newaxis,scan_start:scan_end])
+            data[...,scan_start:scan_end] -= (atmos_offsets[...,iscan,np.newaxis] +\
+                                                atmos_tau[...,iscan,np.newaxis]/np.sin(elevation[np.newaxis,np.newaxis,scan_start:scan_end]))
+        
+        # Apply the gain filter 
+        data_filtered = np.zeros_like(data)
+        weights = 1./auto_rms**2
+
+        for iscan,(scan_start, scan_end) in enumerate(scan_edges): 
+            data_filtered[...,scan_start:scan_end], mask, gain_temp = self.gain_filter(data[...,scan_start:scan_end], 
+                                                                        system_temperature, 
+                                                                        median_offsets[iscan],
+                                                                        feed,
+                                                                        sigma_red=sigma_red,
+                                                                        alpha=alpha)
+        weights[~mask] = 0.0 
+        # Average the data in frequency 
+        # n_bands, n_channels, n_tod = data.shape
+        # ones = np.ones((n_bands, self.n_freq_bin, n_channels//self.n_freq_bin, 1))
+        # binned_data[feed-1] = np.sum(data.reshape(n_bands, self.n_freq_bin, n_channels//self.n_freq_bin,  n_tod) * weights[:,np.newaxis].reshape(n_bands, self.n_freq_bin, n_channels//self.n_freq_bin,  1), axis=2) /\
+        #       np.sum(weights[...,np.newaxis].reshape(n_bands, self.n_freq_bin, n_channels//self.n_freq_bin,  1)*ones, axis=2)
+        # binned_filtered_data[feed-1] = np.sum(data_filtered.reshape(n_bands, self.n_freq_bin, n_channels//self.n_freq_bin,  n_tod) * weights[:,np.newaxis].reshape(n_bands, self.n_freq_bin, n_channels//self.n_freq_bin,  1), axis=2) /\
+        #     np.sum(weights[...,np.newaxis].reshape(n_bands, self.n_freq_bin, n_channels//self.n_freq_bin,  1)*ones, axis=2)
+
+        binned_data, binned_mask, central_freqs, bandwidths = self.bin_frequencies(data, frequencies, weights, self.n_freq_bin) 
+        binned_filtered_data, _, _, _ = self.bin_frequencies(data_filtered, frequencies, weights, self.n_freq_bin) 
+
+        return binned_data, binned_filtered_data, central_freqs, bandwidths
+    
     def gain_filter_and_bin(self, file_info : COMAPData, skip_feeds = [20]) -> np.ndarray:
         with RetryH5PY(file_info.level2_path,'r') as lvl2:
             with RetryH5PY(file_info.level1_path,'r') as ds: 
@@ -158,40 +221,41 @@ class GainFilterAndBin(BaseCOMAPModule):
                 for ifeed, feed in enumerate(tqdm(feeds,desc='Gain Filter and Bin')): 
                     if feed in skip_feeds:
                         continue
-                    #data = ds['spectrometer/tod'][ifeed,...,:] 
+                    # First, read in the data we need
                     data = RetryH5PY.read_dset(ds['spectrometer/tod'], [slice(ifeed, ifeed+1), slice(None), slice(None), slice(None)],lock_file_directory=self.lock_file_path)[0,...]
-
                     system_temperature = lvl2['level2/vane/system_temperature'][0,ifeed,...] 
                     gain = lvl2['level2/vane/gain'][0,ifeed,...]
-
+                    atmos_offsets = lvl2['level2/atmosphere/offsets'][ifeed,...]
+                    atmos_tau = lvl2['level2/atmosphere/tau'][ifeed,...] 
                     # Calibrate the data to the vane 
                     auto_rms = lvl2['level1_noise_stats/auto_rms'][feed-1,...]/gain 
                     data = data/gain[...,np.newaxis]
-                    median_offset = np.nanmedian(data,axis=-1)
+                    if 'level2_noise_stats/binned_data' in lvl2:
+                        sigma_red = lvl2['level2_noise_stats/binned_data/sigma_red'][feed-1,...]
+                        alpha = lvl2['level2_noise_stats/binned_data/alpha'][feed-1,...]
+                    else:
+                        sigma_red = None 
+                        alpha = None
 
-                    # Subtract the best fit atmosphere model 
                     try:
                         elevation = np.radians(lvl2['spectrometer/pixel_pointing/pixel_el'][ifeed,...])
                     except KeyError:
                         raise BadCOMAPFile(file_info.obsid, 'Elevation not found in level 2 file')
-                    for iscan, (scan_start, scan_end) in enumerate(scan_edges):
-                        atmos_offsets = lvl2['level2/atmosphere/offsets'][ifeed,...,iscan]
-                        atmos_tau = lvl2['level2/atmosphere/tau'][ifeed,...,iscan] 
-                        data[...,scan_start:scan_end] -= (atmos_offsets[...,np.newaxis] +\
-                                                         atmos_tau[...,np.newaxis]/np.sin(elevation[np.newaxis,np.newaxis,scan_start:scan_end]))
+                    
+                    # Then bin the data 
+                    binned_data[feed-1],binned_filtered_data[feed-1],central_freqs[feed-1], bandwidths[feed-1] = self.process_data(data, 
+                                                                                                        frequencies, 
+                                                                                                        system_temperature, 
+                                                                                                        atmos_offsets, 
+                                                                                                        atmos_tau, 
+                                                                                                        elevation,
+                                                                                                        scan_edges,
+                                                                                                        auto_rms,
+                                                                                                        feed,
+                                                                                                        sigma_red,
+                                                                                                        alpha)
 
-                    # Apply the gain filter 
-                    data_filtered = np.zeros_like(data)
-                    for scan_start, scan_end in scan_edges: 
-                        data_filtered[...,scan_start:scan_end] = self.gain_filter(data[...,scan_start:scan_end], 
-                                                                                    system_temperature, 
-                                                                                    median_offset,
-                                                                                    auto_rms)
 
-                    # Average the data in frequency 
-                    weights = 1./auto_rms**2
-                    binned_data[feed-1], binned_mask, central_freqs[feed-1], bandwidths[feed-1] = self.bin_frequencies(data, frequencies, weights, self.n_freq_bin) 
-                    binned_filtered_data[feed-1], _, _, _ = self.bin_frequencies(data_filtered, frequencies, weights, self.n_freq_bin) 
                      
         return binned_data, binned_filtered_data, central_freqs, bandwidths
 
@@ -202,8 +266,8 @@ class GainFilterAndBin(BaseCOMAPModule):
             grp = ds['level2']
             if 'binned_data' in grp:
                 del grp['binned_data']
-            if 'binned_filtered_data' in grp:
-                del grp['binned_filtered_data']
+            if self.filtered_binned_data_name in grp:
+                del grp[self.filtered_binned_data_name]
             if 'central_freqs' in grp:
                 del grp['central_freqs']
             if 'bandwidths' in grp:
@@ -221,3 +285,4 @@ class GainFilterAndBin(BaseCOMAPModule):
         
         binned_data, binned_filtered_data, central_freqs, bandwidths = self.gain_filter_and_bin(file_info)
         self.save_data(file_info, binned_data, binned_filtered_data, central_freqs, bandwidths) 
+
