@@ -8,7 +8,6 @@ import logging
 from astropy.wcs import WCS 
 from astropy.io.fits.header import Header
 import toml
-from modules.MapMaking.MapMakingModules.ReadLineData import Level2LineDataReader_Nov2024 
 import sys 
 
 from pathlib import Path

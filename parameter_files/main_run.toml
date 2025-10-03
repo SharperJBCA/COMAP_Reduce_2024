@@ -8,9 +8,9 @@ pipeline = [
     #'modules.DataAcquisition.DataCheckRemote.DataCheckRemote()',
     #'modules.DataAcquisition.DataAcquisition.DataAcquisition()',
     #'modules.DataAcquisition.DataAssess.DataAssess()',
-    #'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()',
+    'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()',
     #'modules.MapMaking.MapMaking.LineMapMaking()',
-    'modules.MapMaking.MapMaking.MapMaking()',
+    #'modules.MapMaking.MapMaking.MapMaking()',
 ]
 
 [modules.MapMaking.MapMaking.LineMapMaking]
@@ -24,16 +24,11 @@ config_file = 'parameter_files/level2_mapmaking.toml'
 [modules.ProcessLevel2.ProcessLevel2.Level2Pipeline]
 
 config_file = 'parameter_files/level2_processing.toml'
-MIN_OBSID = 50050 #49005 
-#7000
+MIN_OBSID = 50050
 
 [modules.DataAcquisition.DataCheckRemote.DataCheckRemote]
 
-#sql_file_command = "select distinct l.obs_id, l.pixel, b.name band, p.diskname disk, p.relpath path, f.shortname shortname,l.filename, o.comment obs_comment from level1 l, band b, filepath p, filetype f where l.band_id  = b.id and l.path_id = p.id and l.filetype_id = f.id and l.filename like '%hd5' order by l.obs_id;"
 sql_file_command = "select distinct l.obs_id, l.pixel, b.name band, p.diskname disk, p.relpath path, f.shortname shortname, l.filename                        from level1 l, band b, filepath p, filetype f                where l.band_id = b.id and l.path_id = p.id and l.filetype_id = f.id and                         l.filename like '%hd5' order by l.obs_id;"
-#sql_file_command = "select distinct l.obs_id, l.pixel, b.name band, p.diskname disk, p.relpath path, f.shortname shortname, l.filename, o.comment obs_comment from level1 l, band b, filepath p, filetype f                where l.band_id = b.id and l.path_id = p.id and l.filetype_id = f.id and                         l.filename like '%hd5' order by l.obs_id;"
-#sql_file_command = "select distinct l.obs_id, l.pixel, b.name band, p.diskname disk, p.relpath path, f.shortname shortname, l.filename, o.comment obs_comment from level1 l, band b, filepath p, filetype f, observation o where l.band_id = b.id and l.path_id = p.id and l.filetype_id = f.id and l.obs_id = o.obs_id and l.filename like '%hd5' order by l.obs_id;"
-#sql_file_command = "select distinct l.obs_id, l.pixel, b.name band, p.diskname disk, p.relpath path, f.shortname shortname, l.filename, o.comment obs_comment from level1 l, band b, filepath p, filetype f, observation o where l.band_id = b.id and l.path_id = p.id and l.filetype_id = f.id and l.obs_id = o.obs_id and l.filename like '%.hd5' order by l.obs_id;"
 presto_info = {host='comap_analysis@presto.caltech.edu', data_directory='/scr/comap/comapPathfinderLevel1/'}
 local_info  = {data_directory='/scratch/nas_core2/sharper/COMAP/data'}
 
