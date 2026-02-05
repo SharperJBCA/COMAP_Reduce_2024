@@ -59,6 +59,7 @@ class DataCheckRemote:
         
         # Step 3) Save these arrays to disk. 
         output_filename = f'file_query_info_data/{datetime.now().strftime("%Y%m%d_%H%M%S")}_file_query_info.npz'
+        os.makedirs(os.path.dirname(output_filename),exist_ok=True)
         np.savez(output_filename, filelist=filelist, obsids=obsids, targets=targets, existing_obsids=existing_obsids, comments=comments)
 
     def __str__(self):

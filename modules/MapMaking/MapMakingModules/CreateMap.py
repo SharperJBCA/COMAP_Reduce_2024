@@ -8,7 +8,6 @@ import logging
 from astropy.wcs import WCS 
 from astropy.io.fits.header import Header
 import toml
-from modules.MapMaking.MapMakingModules.ReadData import Level2DataReader_Nov2024 
 import sys 
 
 from pathlib import Path
@@ -24,6 +23,10 @@ class CreateMap:
                  database_file : str = 'databases/COMAP_manchester.db',
                  file_list_name : str = 'file_list.txt',
                  sigma_red_cutoff : float = 0.4,
+                 calib_path : str = None,
+                 planck_30_path : str = None, 
+                 lambda_ridge : float = 1e-4, 
+                 jackknife_odd_even : str = None,
                  n_processes : int = 1,**kwargs) -> None:
         logging.info("Initializing CreateMap")
 
@@ -55,7 +58,12 @@ class CreateMap:
                       'database':f'{ os.getcwd()}/{database_file}',
                       'file_list': f'{ os.getcwd()}/modules/MapMaking/map_making_configs/{file_list_name}',
                       'output_filename': f'{map_name}_band{band}_feed{"-".join([str(f) for f in feeds])}.fits',
-                      'output_dir': output_dir}
+                      'output_dir': output_dir,
+                      'lambda_ridge': lambda_ridge,
+                      'planck_30_path': planck_30_path,
+                      'calib_path': calib_path,
+                      'jackknife_odd_even':jackknife_odd_even
+        }
         self.n_processes = n_processes
 
     def create_config_file(self, file_list : list, feeds : list = [i for i in range(1,20)], output_filename='output.fits') -> None: 

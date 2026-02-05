@@ -1,15 +1,19 @@
-QUIJOTEFCOMP=gfortran
-QUIJOTEINC=
-QUIJOTELIB=-L/star/lib/
+FCOMP   = ifort
+#gfortran
+F2PY    = f2py
 
-LIBS=-lsla
-FLAGS=
+FCFLAGS =
+
+INCLUDES =
+LIBDIRS  = -L/star/lib
+LIBS     = -lsla
 
 all: pysla
 
 pysla:
-
-	f2py -c --f90exec=$(QUIJOTEFCOMP) $(FLAGS) -m pysla pysla.f90 $(QUIJOTEINC) $(QUIJOTELIB) $(LIBS)
-
-#ffuncs:
-#	f2py -c --f90exec=$(QUIJOTEFCOMP) $(FLAGS) -m ffuncs ffuncs.f90 $(QUIJOTEINC) $(QUIJOTELIB) $(LIBS)
+	$(F2PY) -c \
+		--f77exec=$(FCOMP) \
+		--f90exec=$(FCOMP) \
+		$(FCFLAGS) \
+		-m pysla pysla.f90 \
+		$(INCLUDES) $(LIBDIRS) $(LIBS) 

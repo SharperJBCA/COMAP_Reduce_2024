@@ -17,6 +17,7 @@ from modules.pipeline_control.Pipeline import BadCOMAPFile, RetryH5PY,BaseCOMAPM
 class FindScans(BaseCOMAPModule):
 
     def __init__(self, plot : bool = False, plot_dir : str = 'outputs/FindScans', scan_status_code : int = 1, overwrite : bool = False) -> None:
+        super().__init__()
         self.plot = plot
         self.plot_dir = plot_dir
         self.scan_status_code = scan_status_code

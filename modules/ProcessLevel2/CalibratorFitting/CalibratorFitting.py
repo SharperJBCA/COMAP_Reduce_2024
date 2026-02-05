@@ -19,117 +19,107 @@ import astropy.units as u
 from astropy.modeling.functional_models import Gaussian2D
 from astropy.modeling.models import custom_model
 from matplotlib import pyplot 
+from astroquery.jplhorizons import Horizons
 import time 
 from datetime import datetime
+import logging 
+from scipy.stats import binned_statistic_2d
+from astropy.time import Time
+from astropy.coordinates import SkyCoord, AltAz, EarthLocation
+
+
 try:
-    from modules.utils.Coordinates import comap_longitude, comap_latitude, h2e_full, CalibratorList, pa
     from modules.utils.data_handling import read_2bit
     from modules.SQLModule.SQLModule import COMAPData, db
     from modules.pipeline_control.Pipeline import BadCOMAPFile, RetryH5PY,BaseCOMAPModule
+    try:
+        from modules.utils.Coordinates import comap_longitude, comap_latitude, h2e_full, CalibratorList, pa
+    except:
+        from modules.utils.Coordinates_py import comap_longitude, comap_latitude, h2e_full, CalibratorList, pa
+
 except ModuleNotFoundError:
     from pathlib import Path
     import sys
     sys.path.append(str(Path(__file__).parent.parent.parent.parent))    
-    from modules.utils.Coordinates import comap_longitude, comap_latitude, h2e_full, CalibratorList, pa
     from modules.utils.data_handling import read_2bit
     from modules.SQLModule.SQLModule import COMAPData,db
     from modules.pipeline_control.Pipeline import BadCOMAPFile, RetryH5PY,BaseCOMAPModule
+    try:
+        from modules.utils.Coordinates import comap_longitude, comap_latitude, h2e_full, CalibratorList, pa
+    except:
+        from modules.utils.Coordinates_py import comap_longitude, comap_latitude, h2e_full, CalibratorList, pa
 
 
-from scipy import optimize
-from scipy.optimize import minimize 
-from scipy.optimize import approx_fprime
 
-def fisher_matrix(params, x, y, data, error, epsilon=1e-6):
+
+def _get_body_radec_from_mjd(mjd, target_id="599"):
     """
-    Calculate the Fisher information matrix for the 2D Gaussian model.
-    
-    Parameters:
-    -----------
-    params : array-like
-        Parameters of the 2D Gaussian (amplitude, x_mean, y_mean, x_stddev, y_stddev, theta)
-    x, y : array-like
-        Coordinate arrays
-    data : array-like
-        Observed data values
-    error : array-like or float
-        Uncertainties on the data
-    epsilon : float, optional
-        Step size for numerical differentiation
-        
-    Returns:
-    --------
-    numpy.ndarray
-        Fisher information matrix
+    Generic helper: get RA/Dec (ICRF, deg) for a solar-system body
+    at a given UTC MJD using JPL Horizons (via astroquery).
+
+    target_id:
+        '599' = Jupiter, '699' = Saturn, etc.
     """
+    # Horizons wants JD, not MJD
+    jd = mjd + 2400000.5
 
-    def error_func(params, x, y, data, error):
-        """
-        Calculate the error function for the 2D Gaussian model.
-        """
-        amplitude, x_mean, y_mean, x_stddev, y_stddev, theta = params
-        model = Gaussian2D(amplitude=amplitude, x_mean=x_mean, y_mean=y_mean,
-                            x_stddev=x_stddev, y_stddev=y_stddev, theta=theta)
-        model_data = model(x, y)
-        
-        # Calculate the residuals and apply error weighting
-        residuals = (data - model_data) / error
-        return -np.sum(residuals**2)
+    location = {'lon':comap_longitude*u.deg,
+                'lat':comap_latitude*u.deg,
+                'elevation':1222.0 * u.m}
 
-    n_params = len(params)
-    fisher = np.zeros((n_params, n_params))
-    
-    # Compute negative second derivatives of log-likelihood
-    for i in range(n_params):
-        for j in range(i, n_params):
-            # Second partial derivative with respect to parameters i and j
-            if i == j:
-                # Diagonal elements - second derivative with respect to the same parameter
-                def f(p):
-                    params_modified = params.copy()
-                    params_modified[i] = p
-                    return error_func(params_modified, x, y, data, error)
-                
-                # Second derivative using finite difference
-                d2l_dp2 = approx_fprime(np.array([params[i]]), 
-                                        lambda p: approx_fprime(p, f, epsilon)[0], 
-                                        epsilon)[0]
-                fisher[i, j] = -d2l_dp2
-            else:
-                # Off-diagonal elements - mixed partial derivatives
-                def f_ij(p):
-                    params_modified = params.copy()
-                    params_modified[i] = p[0]
-                    params_modified[j] = p[1]
-                    return error_func(params_modified, x, y, data, error)
-                
-                # Create a function that computes the derivative with respect to parameter j
-                def df_dj(p_i):
-                    #print(params[j], p_i[0])
-                    #print(np.array([p_i[0], params[j]]))
+    # 500 = geocentric observer
+    obj = Horizons(id=target_id,
+                   location='500',   # Earth geocentre
+                   epochs=jd)
+    print(obj)
+    eph = obj.ephemerides(quantities=1)  # RA/Dec in degrees (ICRF)
 
-                    def func_test(p_j):
-                        if isinstance(p_j, np.ndarray):
-                            p_j = p_j.flatten()[0]
-                        a = np.array([p_i[0], p_j])
-                        chi =  f_ij(a)
-                        return chi
+    ra = float(eph['RA'][0])   # deg
+    dec = float(eph['DEC'][0]) # deg
+    return ra, dec
 
-                    return approx_fprime(params[j], 
-                                        func_test, #lambda p_j: f_ij(np.array([p_i[0], p_j])), 
-                                        epsilon)[0]
-                # Compute the mixed derivative
-                d2l_didj = approx_fprime(np.array([params[i]]), df_dj, epsilon)[0]
-                fisher[i, j] = -d2l_didj
-                fisher[j, i] = fisher[i, j]  # Matrix is symmetric
-    
-    return fisher
+def get_jupiter_radec_from_mjd(mjd):
+    return _get_body_radec_from_mjd(mjd, target_id='599')
 
 
+def fit_gaussian2d_with_errors(x, y, z, sigma=None):
+    amp0 = np.nanmax(z) - np.nanmedian(z)
+    i0   = int(np.nanargmax(z))
+    x0   = x[i0]; y0 = y[i0]
+    sig0 = (4.5/60.)/2.355  # degrees
+    theta0 = 0.0
+
+    g0 = models.Gaussian2D(amplitude=amp0, x_mean=x0, y_mean=y0,
+                           x_stddev=sig0, y_stddev=sig0, theta=theta0)
+    g0.theta.fixed = True
+
+    bg0 = models.Const2D(amplitude=np.nanmedian(z))
+    model0 = g0 + bg0
+
+    fitter = fitting.LevMarLSQFitter(calc_uncertainties=True)
+
+    if sigma is not None:
+        # LevMarLSQFitter expects weights = 1/σ
+        w = np.ones_like(z, dtype=float) / sigma
+        best = fitter(model0, x, y, z, weights=w)
+    else:
+        best = fitter(model0, x, y, z)
+
+    cov = fitter.fit_info.get('param_cov')
+    if cov is not None and np.all(np.isfinite(cov)):
+        errs = np.sqrt(np.diag(cov))
+    else:
+        errs = np.full(best.parameters.size, np.nan)
+
+    p = best.parameters
+    p_gauss = p[:6]
+    e_gauss = errs[:6] if errs is not None else np.full(6, np.nan)
+    return p_gauss, e_gauss, best
 
 class CalibratorFitting(BaseCOMAPModule):
 
     def __init__(self, calibrator_fit_group_name='calibrator_fit', overwrite=False, fit_radius=15./60.): 
+        super().__init__()
 
         self.overwrite = overwrite 
         self.calibrator_fit_group_name = calibrator_fit_group_name
@@ -173,6 +163,17 @@ class CalibratorFitting(BaseCOMAPModule):
             ds = grp.create_dataset('dec_offset', data=self.best_fits[2])
             ds.attrs['unit'] = 'degrees'
             ds = grp.create_dataset('dec_offset_errors', data=self.errs_fits[2])
+            ds.attrs['unit'] = 'degrees'
+
+
+            ds = grp.create_dataset('az_offset', data=self.delta_az[0])
+            ds.attrs['unit'] = 'degrees'
+            ds = grp.create_dataset('az_offset_errors', data=self.delta_az[1])
+            ds.attrs['unit'] = 'degrees'
+
+            ds = grp.create_dataset('el_offset', data=self.delta_el[0])
+            ds.attrs['unit'] = 'degrees'
+            ds = grp.create_dataset('el_offset_errors', data=self.delta_el[1]) 
             ds.attrs['unit'] = 'degrees'
 
             ds = grp.create_dataset('major_std', data=self.best_fits[3])
@@ -220,95 +221,72 @@ class CalibratorFitting(BaseCOMAPModule):
         return np.abs(flux * best_fit_errs[0] / best_fits[0])
 
 
-    def get_relative_coordinates(self, az : np.ndarray, el : np.ndarray, mjd : np.ndarray, longitude : float, latitude : float, src_ra : float, src_dec : float) -> np.ndarray:
+    def get_relative_coordinates(self, az : np.ndarray, el : np.ndarray, mjd : np.ndarray, longitude : float, latitude : float, src_ra : float, src_dec : float, obsid : int) -> np.ndarray:
         """
         Get the relative sky coordinates for feed feed 
         """
-        ra, dec = h2e_full(az, el, mjd, longitude, latitude)
+        try:
+            if obsid < 28852:
+                azpos = np.gradient(az,20e-3) > 0
+                az[azpos] += 100./3600. # Corrects for raster scan drift
+            ra, dec = h2e_full(az, el, mjd, longitude, latitude)
+        except ValueError:
+            raise BadCOMAPFile('Bad coordinates')
         
         rot = hp.Rotator(rot=[src_ra, src_dec])
         rel_ra, rel_dec = rot(ra, dec, lonlat=True)
 
         return rel_ra, rel_dec
-
-    def fit_source(self, data : np.ndarray, rel_ra : np.ndarray, rel_dec : np.ndarray) -> np.ndarray:
-        """
-        Fit a source to the data 
-        """
-        # Initial guesses
-        amplitude_guess = np.max(data) - np.median(data)  # Peak above background
-        x_mean_guess = rel_ra[np.argmax(data)]
-        y_mean_guess = rel_dec[np.argmax(data)]
-        x_stddev_guess = 4.5/60./2.355
-        y_stddev_guess = 4.5/60./2.355
-        theta_guess = 0.0
-
-        samples = np.linspace(-1,1,len(data))
-        #guesses = (amplitude_guess, x_mean_guess, y_mean_guess, x_stddev_guess, y_stddev_guess, theta_guess, 0, 0, 0, 0)
-        #result = minimize(error_func, guesses, args=(rel_ra, rel_dec, samples, data), method='Nelder-Mead', options={'maxiter': 1000})
-        #model_data = Gaussian2DPlusPoly1D(rel_ra, rel_dec, samples, *result.x)
-        #peak_idx = np.argmax(model_data)
-        niter = 2 
-        fitter = fitting.LevMarLSQFitter()
-        data_temp = data*1. 
-
-        gauss_model = Gaussian2D(amplitude=amplitude_guess, x_mean=x_mean_guess, y_mean=y_mean_guess,
-                            x_stddev=x_stddev_guess, y_stddev=y_stddev_guess, theta=theta_guess)
-        poly_model = models.Polynomial1D(degree=3, c0=0, c1=0, c2=0, c3=0)
-        for i in range(niter):
-            best_model_gauss = fitter(gauss_model, rel_ra, rel_dec, data_temp) 
-            data_temp = data - best_model_gauss(rel_ra, rel_dec) 
-            gfilter = gaussian_filter(data_temp, 200)
-            data_temp = data - gfilter
-
-            
-        data_model = best_model_gauss(rel_ra, rel_dec)
-        peak_idx =  np.argmax(data_model)
-        parameter_list = [p for p in best_model_gauss.parameters] 
-        return parameter_list, peak_idx, data_model, gfilter
-    #(best_fit.amplitude.value, best_fit.x_mean.value, best_fit.y_mean.value, major_axis, minor_axis, position_angle), peak_idx
-
-    def fit_source_bootstrap(self, data : np.ndarray, rel_ra : np.ndarray, rel_dec : np.ndarray, n_bootstraps=20) -> np.ndarray:
-
-        best_fits = np.zeros((self.nparameters,n_bootstraps))
-        peak_idxs = np.zeros(n_bootstraps)
-        #for i in range(n_bootstraps):
-        #    mask = np.random.uniform(low=0,high=data.size, size=data.size).astype(int)
-        #    #np.random.choice(data.size, data.size, replace=True)
-        best_fit_values, peak_idx, data_model, gfilter = self.fit_source(data, rel_ra, rel_dec)
-            #best_fits[:,i] = best_fit_values
-            #peak_idxs[i] = peak_idx
-        
-        #best_fit_values = np.nanmean(best_fits, axis=1)
-        #std_errs = np.nanstd(best_fits, axis=1)
-        #peak_idx = int(np.nanmedian(peak_idxs))
-        stddev = np.nanstd(data-data_model-gfilter)
-        fm = fisher_matrix(best_fit_values,  rel_ra, rel_dec, data-gfilter, stddev)
-        cov_matrix = np.linalg.inv(fm)
-        # Standard errors are the square roots of the diagonal elements
-        std_errors_fm = np.sqrt(np.diag(cov_matrix))
-
-        #print(std_errs)
-        return best_fit_values, std_errors_fm, int(np.median(peak_idx)), data_model, gfilter
+    
+    def rotate_pa(self, delta_ra, delta_dec, pa):
+        delta_az = np.cos(pa)*delta_ra + np.sin(pa)*delta_dec 
+        delta_el =-np.sin(pa)*delta_ra + np.cos(pa)*delta_dec 
+        return delta_az, delta_el 
+    def rotate_pa_error(self, error_ra, error_dec, pa):
+        cq, sq = np.cos(pa), np.sin(pa) 
+        R = np.array([[ cq, sq],
+                      [-sq, cq]])
+        cov = np.array([[error_ra**2, 0],
+                        [0          , error_dec**2]])
+        cov_azel = R @ cov @ R.T 
+        return np.diag(cov_azel)**0.5
 
     def fit_sources(self, file_info : COMAPData) -> None:
 
         with RetryH5PY(file_info.level2_path,'r') as f:
-            src_ra, src_dec = CalibratorList[file_info.source] 
             feeds = f['spectrometer/feeds'][:]
             if f['level2/scan_edges'].shape[0] == 0:
                 raise BadCOMAPFile(file_info.obsid, "No Scan Edges found in file")
 
             scan_start,scan_end = f['level2/scan_edges'][0,:]
             mjd = f['spectrometer/MJD'][scan_start:scan_end]
+            obsid = file_info.obsid
 
-            min_obs_pa  = pa(np.array([src_ra]), np.array([src_dec]), np.array([np.min(mjd)]), comap_longitude, comap_latitude) 
-            max_obs_pas = pa(np.array([src_ra]), np.array([src_dec]), np.array([np.max(mjd)]), comap_longitude, comap_latitude)
+            if file_info.source.lower() == 'jupiter':
+                src_ra, src_dec = get_jupiter_radec_from_mjd(np.nanmedian(mjd))
+
+                location = EarthLocation.from_geodetic(
+                    lon=comap_longitude * u.deg,
+                    lat=comap_latitude * u.deg,
+                    height=1200 * u.m,
+)
+                altaz_frame = AltAz(obstime=Time(np.nanmedian(mjd),format='mjd'), location=location)
+
+                src_coord = SkyCoord(src_ra*u.deg, src_dec*u.deg, frame='icrs')
+                src_altaz = src_coord.transform_to(altaz_frame)
+            else:
+                src_ra, src_dec = CalibratorList[file_info.source] 
+
+            min_obs_pa = pa(np.array([src_ra]), np.array([src_dec]), np.array([np.min(mjd)]), comap_longitude, comap_latitude) 
+            max_obs_pa = pa(np.array([src_ra]), np.array([src_dec]), np.array([np.max(mjd)]), comap_longitude, comap_latitude)
+            mean_pa = np.mean([max_obs_pa,min_obs_pa])
 
             n_feeds, n_bands, n_channels, n_tod = f['level2/binned_filtered_data'].shape
             self.nparameters = 6
             self.best_fits = np.zeros((self.nparameters,n_feeds,n_bands,n_channels))
             self.errs_fits = np.zeros((self.nparameters,n_feeds,n_bands,n_channels))
+            self.delta_az = np.zeros((2,n_feeds,n_bands,n_channels))
+            self.delta_el = np.zeros((2,n_feeds,n_bands,n_channels))
             self.chi2_fits = np.zeros((n_feeds,n_bands,n_channels)) + np.inf
             for ifeed, feed in enumerate(feeds):
                 if feed == 20:
@@ -316,54 +294,162 @@ class CalibratorFitting(BaseCOMAPModule):
 
                 az = f['spectrometer/pixel_pointing/pixel_az'][ifeed,scan_start:scan_end]
                 el = f['spectrometer/pixel_pointing/pixel_el'][ifeed,scan_start:scan_end]
-
-                #print('AZEL SUM', ifeed, feed, np.sum(az), np.sum(el))
-                rel_ra, rel_dec = self.get_relative_coordinates(az,el,mjd,comap_longitude,comap_latitude, src_ra, src_dec)
+                tod =  f['level2/binned_filtered_data'][feed-1,...]
+                rel_ra, rel_dec = self.get_relative_coordinates(az,el,mjd,comap_longitude,comap_latitude, src_ra, src_dec, obsid)
                 mask = (rel_ra**2 + rel_dec**2) < self.fit_radius**2 
 
+                beam_sigma = 4.5/60.0/2.355
+                r2 = rel_ra**2 + rel_dec**2
 
                 for iband, ichan in tqdm(product(range(n_bands), range(n_channels)),desc=f'Processing Feed {feed}'):
-                    data = f['level2/binned_filtered_data'][feed-1,iband,ichan,scan_start:scan_end]
+                    data = tod[iband,ichan,scan_start:scan_end]
 
                     N = data.size//2 * 2
                     rms_data = np.nanstd(data[:N:2]-data[1:N:2])/np.sqrt(2)
-                    if rms_data == 0:
-                        continue
 
+                    annulus = (r2 > (1.5*beam_sigma)**2) & (r2 < (3.0*beam_sigma)**2)
+
+                    if np.count_nonzero(annulus) > 20:
+                        rms_data = np.nanstd(data[annulus])
+                    else:
+                        N = data.size//2 * 2
+                        rms_data = np.nanstd(data[:N:2] - data[1:N:2]) / np.sqrt(2)
+
+                    if (rms_data == 0) | np.isnan(rms_data):
+                        continue
                     mask_data = mask & np.isfinite(data)
+
                     data = data[mask_data] 
+                    rel_ra_masked = rel_ra[mask_data]
+                    rel_dec_masked = rel_dec[mask_data]
                     if len(data) < 10:
                         continue
 
-                    data_processed = data - np.median(data)
 
+                    data_processed = data - np.nanmedian(data)
+                    #print(np.sum(rel_ra_masked), np.sum(rel_dec_masked),np.sum(data_processed),rms_data)
                     try:
-                        self.best_fits[:,feed-1,iband,ichan],self.errs_fits[:,feed-1,iband,ichan], peak_idx, data_model, gfilter = self.fit_source_bootstrap(data_processed, 
-                                                                                                                                    rel_ra[mask_data], 
-                                                                                                                                    rel_dec[mask_data])
+                        p_gauss, e_gauss, best = fit_gaussian2d_with_errors(rel_ra_masked,rel_dec_masked, data_processed, sigma=rms_data)
                     except np.linalg.LinAlgError:
                         continue
-                    residual = data_processed-data_model-gfilter 
-                    rel_ra_masked = rel_ra[mask_data]
-                    rel_dec_masked = rel_dec[mask_data]
+
+                    self.best_fits[:,feed-1,iband,ichan] = p_gauss
+                    self.errs_fits[:,feed-1,iband,ichan] = e_gauss 
+
+                    delta_az, delta_el = self.rotate_pa(p_gauss[1],p_gauss[2],np.radians(mean_pa))
+                    delta_az_error, delta_el_error = self.rotate_pa_error(e_gauss[1],e_gauss[2],np.radians(mean_pa))
+                    self.delta_az[0,feed-1,iband,ichan] = delta_az 
+                    self.delta_el[0,feed-1,iband,ichan] = delta_el
+                    self.delta_az[1,feed-1,iband,ichan] = delta_az_error 
+                    self.delta_el[1,feed-1,iband,ichan] = delta_el_error
+
+                    residual = data_processed-best(rel_ra_masked, rel_dec_masked) 
                     mask_close = (rel_ra_masked**2 + rel_dec_masked**2) < (4.5/60./2.355)**2
                     chi2 = np.sum((residual[mask_close])**2/rms_data**2)/(np.sum(mask_close)-self.nparameters)
                     self.chi2_fits[feed-1,iband,ichan] = chi2
-                    # amp, ra_offset, dec_offset, major_std, minor_std, position_angle = self.best_fits[:,ifeed,iband,ichan]
-                    # print('OFFSETS', ra_offset*60, dec_offset*60)
-                    # print('CHI2', chi2)
-                    # pyplot.plot(data_processed-data_model-gfilter)
-                    # pyplot.plot(data_model)
-                    # pyplot.grid(which='both',ls=':',alpha=0.5,color='k')
-                    # pyplot.xlabel('sample')
-                    # pyplot.ylabel('K')
-                    # pyplot.title(f'Feed {feed} Band {iband} Chan {ichan} MJD {mjd_masked[peak_idx]}')
-                    # pyplot.show()
                 
+
+    def make_diagnostic_plots(self, file_info, feed, band, chan,
+                              out_prefix="calfit_debug"):
+        """
+        Make 2D binned images of:
+          - data
+          - best-fit Gaussian model
+          - residual
+        for a given (feed, band, chan).
+        """
+        with RetryH5PY(file_info.level2_path, 'r') as f:
+            scan_start, scan_end = f['level2/scan_edges'][0, :]
+            mjd  = f['spectrometer/MJD'][scan_start:scan_end]
+            az   = f['spectrometer/pixel_pointing/pixel_az'][feed, scan_start:scan_end]
+            el   = f['spectrometer/pixel_pointing/pixel_el'][feed, scan_start:scan_end]
+            tod  = f['level2/binned_filtered_data'][feed, band, chan, scan_start:scan_end]
+
+            # Source position
+            if file_info.source.lower() == 'jupiter':
+                src_ra, src_dec = get_jupiter_radec_from_mjd(np.nanmedian(mjd))
+            else:
+                src_ra, src_dec = CalibratorList[file_info.source]
+
+        rel_ra, rel_dec = self.get_relative_coordinates(
+            az, el, mjd, comap_longitude, comap_latitude, src_ra, src_dec,file_info.obsid
+        )
+
+        mask = (rel_ra**2 + rel_dec**2) < self.fit_radius**2
+        mask &= np.isfinite(tod)
+
+        if np.sum(mask) < 10:
+            print("Not enough data points for diagnostic plot.")
+            return
+
+        rel_ra = rel_ra[mask]
+        rel_dec = rel_dec[mask]
+        data = tod[mask]
+        data_processed = data - np.nanmedian(data)
+        # Rebuild best-fit Gaussian2D + Const2D from stored params
+        p = self.best_fits[:, feed, band, chan]  # [amp, x0, y0, sigx, sigy, theta]
+        amp, x0, y0, sx, sy, theta = p
+        g = models.Gaussian2D(
+            amplitude=amp, x_mean=x0, y_mean=y0,
+            x_stddev=sx, y_stddev=sy, theta=theta
+        )
+        bg = models.Const2D(amplitude=0.0)  # already median-subtracted
+        model = g + bg
+
+        model_vals = model(rel_ra, rel_dec)
+        residual = data_processed - model_vals
+
+        # Bin onto a grid for prettier images
+        nbins = 32
+        xbins = np.linspace(rel_ra.min(), rel_ra.max(), nbins + 1)
+        ybins = np.linspace(rel_dec.min(), rel_dec.max(), nbins + 1)
+
+        def bin2d(vals):
+            H, xe, ye, _ = binned_statistic_2d(
+                rel_ra, rel_dec, vals,
+                statistic='mean', bins=[xbins, ybins]
+            )
+            return H.T, xe, ye
+
+        data_img, xe, ye = bin2d(data_processed)
+        model_img, _, _  = bin2d(model_vals)
+        resid_img, _, _  = bin2d(residual)
+
+        fig, axes = pyplot.subplots(1, 3, figsize=(12, 4), constrained_layout=True)
+        titles = ["Data (median-subtracted)", "Best-fit model", "Residual"]
+        imgs = [data_img, model_img, resid_img]
+
+        for ax, img, title in zip(axes, imgs, titles):
+            im = ax.imshow(
+                img,
+                origin="lower",
+                extent=[xe[0], xe[-1], ye[0], ye[-1]],
+                aspect="equal"
+            )
+            ax.set_title(title)
+            ax.set_xlabel("ΔRA [deg]")
+            ax.set_ylabel("ΔDec [deg]")
+            pyplot.colorbar(im, ax=ax, shrink=0.8)
+
+        # Text panel with parameters
+        chi2 = self.chi2_fits[feed, band, chan]
+        fig.suptitle(
+            f"OBSID {file_info.obsid}  feed={feed+1}  band={band}  chan={chan}\n"
+            f"amp={amp:.3g} K, x0={x0:.4f}°, y0={y0:.4f}°, "
+            f"sx={sx*60:.2f}', sy={sy*60:.2f}', chi2_red={chi2:.2f}"
+        )
+
+        outfile = f"{out_prefix}_obs{file_info.obsid}_f{feed+1}_b{band}_c{chan}.png"
+        fig.savefig(outfile, dpi=200)
+        pyplot.close(fig)
+        print("Saved", outfile)
 
 
     def run(self, file_info : COMAPData) -> None:
         """ """
+        #if  file_info.source  == 'jupiter':
+        #    logging.info(f'Calibrator fitting not implemented for {file_info.source}')
+        #    return 
         if not file_info.source_group == 'Calibrator':
             return
 
@@ -374,10 +460,55 @@ class CalibratorFitting(BaseCOMAPModule):
         self.save_data(file_info)
 
 if __name__ == '__main__':
-    import matplotlib 
+    import matplotlib
     matplotlib.use('Agg')
-    db.connect(sys.argv[1])
-    filelist = db.query_obsid_list([44070], return_list=True, return_dict=False)
-    calibrator_fitting = CalibratorFitting()
-    calibrator_fitting.run(filelist[0])
-    db.disconnect() 
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("dbpath", help="Path to COMAP SQLite database")
+    parser.add_argument("--obsid", type=int, nargs="+", required=True,
+                        help="One or more obsids to process")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="Overwrite existing calibrator_fit group")
+    parser.add_argument("--plot", action="store_false",
+                        help="Make diagnostic plots")
+    parser.add_argument("--chi2_max", type=float, default=None,
+                        help="Flag fits with chi2_red > chi2_max")
+    parser.add_argument("--flux_min", type=float, default=None,
+                        help="Flag fits with flux < flux_min (Jy)")
+    parser.add_argument("--feed", type=int, default=None,
+                        help="Specific feed (1-based index) to plot")
+    parser.add_argument("--band", type=int, default=None,
+                        help="Specific band index to plot")
+    parser.add_argument("--chan", type=int, default=None,
+                        help="Specific channel index to plot")
+    args = parser.parse_args()
+
+    db.connect(args.dbpath)
+
+    filelist = db.query_obsid_list(args.obsid, return_list=True, return_dict=False)
+
+    for file_info in filelist:
+        print(f"Processing obsid {file_info.obsid}")
+        calibrator_fitting = CalibratorFitting(overwrite=args.overwrite)
+        calibrator_fitting.run(file_info)
+
+        # Basic printout for a reference channel
+        print("Example chi2[0,0,0] =", calibrator_fitting.chi2_fits[0, 0, 0])
+        for i in range(6):
+            print("param", i,
+                  calibrator_fitting.best_fits[i, 0, 0, 0],
+                  "+/-",
+                  calibrator_fitting.errs_fits[i, 0, 0, 0])
+
+        if args.plot:
+            # Either use specific indices or find suspicious ones
+            calibrator_fitting.make_diagnostic_plots(
+                    file_info,
+                    feed=args.feed-1,  # convert to 0-based
+                    band=args.band,
+                    chan=args.chan,
+                    out_prefix="calfit_specific"
+                )
+
+    db.disconnect()

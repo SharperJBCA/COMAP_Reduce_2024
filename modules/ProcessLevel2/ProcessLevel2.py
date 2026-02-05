@@ -178,7 +178,6 @@ class Level2Pipeline:
 
         # Get the list of files to be processed 
         if not self.target_obsid:
-            print('hello')
             level1_filelist = db.get_unprocessed_files(source_group=target_source_group, source=target_source, min_obsid=self.MIN_OBSID, overwrite=True)
         else: 
             if isinstance(self.target_obsid,str):
@@ -220,11 +219,11 @@ class Level2Pipeline:
          
         # Add master pid to parameters 
         # Clear lock files 
-        lock_files_folder = f'/home/sharper/.COMAP_PIPELINE_LOCK_FILES/{os.getpid()}'
+        lock_files_folder = None # f'/home/sharper/.COMAP_PIPELINE_LOCK_FILES/{os.getpid()}'
         self.parameters['Master']['lock_files_folder'] = lock_files_folder
-        os.makedirs(lock_files_folder, exist_ok=True)
-        for filename in os.listdir(lock_files_folder):
-            os.remove(os.path.join(lock_files_folder, filename))
+        #os.makedirs(lock_files_folder, exist_ok=True)
+        #for filename in os.listdir(lock_files_folder):
+        #    os.remove(os.path.join(lock_files_folder, filename))
 
         # Run the pipeline in parallel
         self.execute_parallel_subprocess(chunk_filelists, self.parameters)

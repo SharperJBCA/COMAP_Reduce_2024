@@ -42,6 +42,7 @@ except ModuleNotFoundError:
 class SystemTemperature(BaseCOMAPModule): 
 
     def __init__(self, plot_vane : bool = False, plot_dir : str = '', plot_tsys : bool = True, overwrite=False) -> None:
+        super().__init__()
         self.plot_vane = plot_vane
         self.plot_dir = plot_dir
         self.plot_tsys = plot_tsys
@@ -58,25 +59,16 @@ class SystemTemperature(BaseCOMAPModule):
 
         self.lock_file_path = None
 
-    def already_processed(self, file_info : COMAPData, overwrite : bool = False) -> bool:
-        """
-        Check if the system temperature has already been processed
-        """
-        if overwrite:
+    def already_processed(self, file_info: COMAPData, overwrite: bool = False) -> bool:
+        if overwrite or not os.path.exists(file_info.level2_path or ""):
             return False
-
-        if not os.path.exists(file_info.level2_path):
-            return False 
-
-        with RetryH5PY(file_info.level2_path, 'r') as ds: 
-            if 'level2/vane/system_temperature' in ds:
-                if ds['level2/vane/system_temperature'].shape[0] == 0:
-                    return False
-                if ds['level2/vane/system_temperature'].shape[1] != ds['spectrometer/feeds'].shape[0]:
-                    return False
-            if 'level2/vane' in ds:
-                return True 
-        return False
+        with RetryH5PY(file_info.level2_path, 'r') as ds:
+            if 'level2/vane' not in ds:
+                return False
+            grp = ds['level2/vane']
+            if 'system_temperature' not in grp or 'gain' not in grp:
+                return False
+        return True
 
     
     def plot_vane_events(self, file_info : COMAPData) -> None:
@@ -260,6 +252,8 @@ class SystemTemperature(BaseCOMAPModule):
         
         T_r = (T_h - Y T_c) / (Y - 1) 
         Y = V_h/V_c 
+
+        T_sys = T_h/(Y-1) - Y T_c / (Y-1) 
         """
         Y = vane_hots / vane_colds
         T_sys = (T_h - Y * self.T_c) / (Y - 1) 

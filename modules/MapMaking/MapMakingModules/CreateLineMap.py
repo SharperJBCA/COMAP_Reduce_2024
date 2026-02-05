@@ -17,7 +17,7 @@ class CreateLineMap:
 
     def __init__(self, map_name : str = 'Unknown', band : int = 0, output_dir : str = 'outputs/', 
                  source : str = 'Unknown', source_group : str = 'Unknown',
-                 wcs_def : str = None, wcs_def_file : str = None, offset_length : int = 100,
+                 wcs_def : str = None, wcs_def_file : str = None, 
                  feeds : list = [i for i in range(1,20)],
                     line_frequency : float = 31.22332, line_segment_width : int = 30,
                  tod_data_name : str = 'level2/binned_filtered_data',
@@ -42,7 +42,6 @@ class CreateLineMap:
         self.parameters = {'wcs_def': wcs_def,
                       'source': source,
                         'source_group': source_group,
-                      'offset_length': offset_length,
                       'line_frequency': line_frequency , # GHz 
                       'line_segment_width': line_segment_width, # channels 
                       'feeds': feeds,

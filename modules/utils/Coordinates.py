@@ -1,4 +1,4 @@
-from modules.utils import pysla
+import pysla
 import numpy as np
 import healpy as hp
 

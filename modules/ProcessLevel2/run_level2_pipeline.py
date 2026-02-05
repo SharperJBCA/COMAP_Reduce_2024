@@ -40,7 +40,7 @@ def process_files(filelist: list, parameters: dict, rank: int, base_delay : floa
             logging.info(f"Importing module: {package}.{module}")
             module = getattr(importlib.import_module(package), module)
             module = module(**args)
-            module.set_lock_file_path(parameters['Master']['lock_files_folder'])
+            #module.set_lock_file_path(parameters['Master']['lock_files_folder'])
             logging.info(f"Module imported: {module.__class__.__name__}")
             # Execute the module
             try:

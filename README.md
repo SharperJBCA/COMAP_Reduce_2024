@@ -59,10 +59,12 @@ The pipeline is modular and configurable through TOML configuration files.
     cd ..
     ``` 
 
-4. Compile bin_func routines
+4. Compile utils routines
     ```bash
     cd utils
     python setup_bin_funcs.py build_ext --inplace 
+    python setup_median_filter.py build_ext --inplace
+    python setup_mean_filter.py build_ext --inplace
     ``` 
 
 ## Input Data & Databases

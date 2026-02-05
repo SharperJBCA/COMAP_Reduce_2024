@@ -38,10 +38,14 @@ def get_file_list(target_source_group=None, target_source=None, min_obs_id=7000,
         
     print('Number of files:',len(query_source_group_list))
     source_file_list = [f.level2_path for k,f in query_source_group_list.items() if f.level2_path is not None]
-    
+    source_obsids = [f.obsid for k,f in query_source_group_list.items() if f.level2_path is not None]
+
     # Check that level2/binned_filtered_data in each file 
     final_files = [] 
-    for f in source_file_list:
+    for f,obsid in zip(tqdm(source_file_list,desc='Checking final file list'),source_obsids):
+        quality_flags = db.get_quality_flags(obsid) 
+        if all([not v.is_good for k,v in quality_flags.items()]):
+            continue
         try:
             with h5py.File(f, 'r') as h5:
                 if ('level2/binned_filtered_data' in h5) and ('level2_noise_stats/binned_filtered_data/auto_rms' in h5):
@@ -49,7 +53,6 @@ def get_file_list(target_source_group=None, target_source=None, min_obs_id=7000,
         except OSError:
             logging.info(f'Could not open file: {f}')
             continue
-    
     return final_files
 
 class MapMaking: 
@@ -78,6 +81,7 @@ class MapMaking:
             module = module_info['module']
             args = module_info['args']
             # Import the module
+            print(package, module)
             module = getattr(importlib.import_module(package), module)
             module = module(**args)
 

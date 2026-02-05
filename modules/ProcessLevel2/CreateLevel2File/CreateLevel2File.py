@@ -17,6 +17,7 @@ class CreateLevel2File(BaseCOMAPModule):
 
     def __init__(self, output_dir : str = '', save_dir_structure : str = './',
                   level1_datasets : list = [], level1_attributes : list = []) -> None:
+        super().__init__()
         self.output_dir = output_dir 
         self.level1_datasets = level1_datasets # Format = [[dset_name, dset_scale], ...]
         self.level1_attributes = level1_attributes

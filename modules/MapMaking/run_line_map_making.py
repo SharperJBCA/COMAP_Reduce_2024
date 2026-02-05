@@ -121,5 +121,4 @@ def main():
    #save_maps(maps, parameters) 
 
 if __name__ == "__main__":
-    print('HELLO')
     main()  

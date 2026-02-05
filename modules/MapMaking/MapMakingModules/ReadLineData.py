@@ -25,7 +25,7 @@ from modules.utils.median_filter import medfilt
 from modules.utils.Coordinates import h2e_full, comap_longitude, comap_latitude
 
 
-from modules.ProcessLevel2.GainFilterAndBin.GainFilters import GainFilterWithPrior 
+from modules.ProcessLevel2.GainFilterAndBin.GainFilters import GainFilterBase 
 
 from mpi4py import MPI
 comm = MPI.COMM_WORLD
@@ -60,7 +60,7 @@ class Level2LineData_Nov2024:
 
 class Level2LineDataReader_Nov2024: 
 
-    def __init__(self, tod_data_name : str = 'level2/binned_filtered_data') -> None:
+    def __init__(self, tod_data_name : str = 'level2/binned_filtered_data', auto_rms_cut = 0.1, sigma_red_cut=0.5, alphas_cut=-1.5) -> None:
         self.tod_data_name = tod_data_name
 
 
@@ -80,7 +80,12 @@ class Level2LineDataReader_Nov2024:
 
         self._last_pixels_index = 0 
 
-        self.gain_filter = GainFilterWithPrior()
+        self.gain_filter = GainFilterBase()
+
+        self.auto_rms_cut = auto_rms_cut
+        self.sigma_red_cut = sigma_red_cut
+        self.alphas_cut = alphas_cut
+        self.statistics_channel = 0 
 
     @property
     def sum_map(self) -> np.ndarray:
@@ -161,150 +166,167 @@ class Level2LineDataReader_Nov2024:
         self.header['CDELT3'] = 2./1024. 
         self.header['CRPIX3'] = 1
 
-        self.data_container.sum_map    = np.zeros((line_segment_width,self.header['NAXIS2']*self.header['NAXIS1']), dtype=np.float32)
-        self.data_container.weight_map = np.zeros((line_segment_width,self.header['NAXIS2']*self.header['NAXIS1']), dtype=np.float32)
-        self.data_container.hits_map   = np.zeros((self.header['NAXIS2']*self.header['NAXIS1']), dtype=np.float32)
+        n_pixels = header['NAXIS1'] * header['NAXIS2']
+        self.data_container.sum_map = np.zeros((line_segment_width, n_pixels), dtype=np.float32)
+        self.data_container.weight_map = np.zeros((line_segment_width, n_pixels), dtype=np.float32)
+        self.data_container.hits_map = np.zeros(n_pixels, dtype=np.float32)
+
+    def select_band(self, frequencies, line_frequency, line_segment_width):
+        """Select band and channel indices covering line frequency."""
+        for i, freq in enumerate(frequencies):
+            if np.min(freq) < line_frequency < np.max(freq):
+                channel_idx = np.argmin((freq - line_frequency) ** 2)
+                start = max(channel_idx - line_segment_width // 2, 0)
+                end = min(channel_idx + line_segment_width // 2, len(freq))
+                return i, start, end
+        return None, None, None
+    
+    def flags_are_bad(self, obsid, feed, band, iscan, f_lvl2, database) -> bool:
+        """Return True if flags/noise stats indicate bad data."""
+        # Observer flags from DB (optional)
+        if database:
+            observer_flags = db.get_quality_flags(obsid).get((feed, band), None)
+            if observer_flags is not None and not observer_flags.is_good:
+                return True
+
+        # Noise stats (use feed-1 because arrays are 0-based, feeds are 1-based)
+        # Use a safe statistics_channel (mid-channel) if not available elsewhere.
+        sigma_arr = f_lvl2['level2_noise_stats/binned_filtered_data/sigma_red']
+        rms_arr   = f_lvl2['level2_noise_stats/binned_filtered_data/auto_rms']
+        alpha_arr = f_lvl2['level2_noise_stats/binned_filtered_data/alpha']
+
+        n_stats_ch = sigma_arr.shape[2]
+        stats_ch = getattr(self, "statistics_channel", None)
+        if stats_ch is None:
+            stats_ch = n_stats_ch // 2  # midpoint channel
+
+        sigma_red = sigma_arr[feed-1, band, stats_ch, iscan]
+        auto_rms  = rms_arr[feed-1, band, stats_ch, iscan]
+        alpha     = alpha_arr[feed-1, band, stats_ch, iscan]
+
+        # Simple cuts (tune as needed)
+        if sigma_red > self.sigma_red_cut:
+            return True
+        if auto_rms > self.auto_rms_cut:
+            return True
+        if alpha < self.alpha_cut:
+            return True
+
+        return False
+
+    def apply_atmosphere_correction(self, tod, atmos_offsets, atmos_tau, elevation):
+        """
+        Subtract atmosphere offsets and tau from TOD.
+        Shapes:
+        tod:            (n_chan, n_time)
+        atmos_offsets:  (n_chan,)
+        atmos_tau:      (n_chan,)
+        elevation:      (n_time,)
+        """
+        return tod - (atmos_offsets[..., None] + atmos_tau[..., None] / np.sin(np.radians(elevation)))
 
     def read_data(self, level1_file : str, level2_file : str, line_frequency : float, line_segment_width : int, database, use_flags : bool = False, bad_feeds : list = []) -> tuple:
+        """Read a Level 1/Level 2 file pair and return a list of TOD segments."""
+        tod_blocks, weight_blocks, ra_blocks, dec_blocks = [], [], [], []
 
-        with h5py.File(level1_file, 'r') as f_lvl1:
-            frequencies = f_lvl1['spectrometer/frequency'][...] 
-            for i, freq in enumerate(frequencies):
-                if np.min(freq) < line_frequency < np.max(freq):
-                    band = i
-                    statistics_channel = 0
-                    channel_idx = np.argmin((freq - line_frequency)**2)
-                    channel_start = int(np.max([channel_idx - line_segment_width//2, 0]))
-                    channel_end   = int(np.min([channel_idx + line_segment_width//2, len(freq)]))
+        with h5py.File(level1_file, 'r') as f_lvl1, h5py.File(level2_file, 'r') as f_lvl2:
+            frequencies = f_lvl1['spectrometer/frequency'][...]
+            band, channel_start, channel_end = self.select_band(frequencies, line_frequency, line_segment_width)
+            if band is None:
+                return np.array([], dtype=np.float32),np.array([], dtype=np.float32),np.array([], dtype=np.float32),np.array([], dtype=np.float32)
 
-                    self.header['CRVAL3'] = freq[channel_start]
-                    self.header['CDELT3'] = (freq[channel_start] - freq[channel_start+1]) 
+            obsid = int(os.path.basename(level2_file).split('-')[1])
+            feeds = f_lvl2['spectrometer/feeds'][:-1] 
+            scan_edges = f_lvl2['level2/scan_edges'][...] 
 
-                    break
-            
-            with h5py.File(level2_file, 'r') as f_lvl2:
-                obsid = int(os.path.basename(level2_file).split('-')[1])
-                feeds = f_lvl2['spectrometer/feeds'][:-1] 
-                scan_edges = f_lvl2['level2/scan_edges'][...] 
-                tod = []
-                weights = []
-                x   = [] 
-                y   = [] 
-                if database: 
-                    observer_flags = db.get_quality_flags(obsid)
+            for ifeed, feed in enumerate(feeds): 
+                if feed in bad_feeds:
+                    continue
 
-                for ifeed, feed in enumerate(feeds): 
-                    if feed in bad_feeds:
+                for iscan, (start, end) in enumerate(scan_edges):
+                    logging.info(f'Obsid {obsid} Feed {feed} Band {band} Scan {iscan} Start {start} End {end}')
+                    if self.flags_are_bad(obsid, feed, band, iscan, f_lvl2, database):
                         continue
 
-                    if database: 
-                        if (feed, band) in observer_flags:
-                            if not observer_flags[(feed, band)].is_good:
-                                print(f'Feed {feed} is bad for band {band} in obsid {obsid}')
-                                logging.info(f'Feed {feed} is bad for band {band} in obsid {obsid}')
-                                continue
-
-                    if use_flags:
-                        scan_flags = db.query_scan_flags(obsid, feed, band) 
-                    else:
-                        scan_flags = np.ones(len(scan_edges), dtype=bool)
-                    for ((iscan, scan_flag), (start, end)) in zip(enumerate(scan_flags),scan_edges):
-                        logging.info(f'Obsid {obsid} Feed {feed} Band {band} Scan {iscan} Start {start} End {end}')
-                        length = (end - start)//self.data_container.offset_length * self.data_container.offset_length
-                        end = int(start + length)
+                    length = (end - start)//self.data_container.offset_length * self.data_container.offset_length
+                    end = int(start + length)
+                    if length <= 0:
+                        continue
 
 
 
-                        if True:
-                            sigma_red = f_lvl2['level2_noise_stats/binned_filtered_data/sigma_red'][feed-1, band, statistics_channel, iscan] 
-                            auto_rms  = f_lvl2['level2_noise_stats/binned_filtered_data/auto_rms'][feed-1, band, statistics_channel, iscan]
-                            alphas    = f_lvl2['level2_noise_stats/binned_filtered_data/alpha'][feed-1, band, statistics_channel, iscan]
+                    # Define noise weights 
+                    auto_rms = f_lvl2['level2_noise_stats/binned_filtered_data/auto_rms'][feed-1, band, self.statistics_channel, iscan]
+                    # Guard against zero/NaN
+                    if not np.isfinite(auto_rms) or auto_rms <= 0:
+                        continue
+                    weights_seg = np.ones((line_segment_width, length), dtype=np.float64) / (auto_rms ** 2)
+
+                    # --- Coordinates
+                    az = f_lvl2['spectrometer/pixel_pointing/pixel_az'][ifeed, start:end]  # ifeed!
+                    el = f_lvl2['spectrometer/pixel_pointing/pixel_el'][ifeed, start:end]
+                    mjd = f_lvl2['spectrometer/MJD'][start:end]
+                    ra, dec = h2e_full(az, el, mjd, comap_longitude, comap_latitude)
+
+                    # Calibrate the Level 1 data 
+                    tod_full = f_lvl1['spectrometer/tod'][ifeed, band, :, start:end]
+                    gain = f_lvl2['level2/vane/gain'][0,ifeed,band,:] 
+                    tsys = f_lvl2['level2/vane/system_temperature'][0,ifeed,band,:]
+                    gsafe = np.where(np.isfinite(gain) & (gain != 0), gain, np.nan)
+                    tod_full = tod_full / gsafe[:, None]
 
 
-                            if sigma_red > 0.5:
-                                continue
-                            if auto_rms > 1e-1:
-                                continue
-                            if alphas < -1.5:
-                                continue    
-
-                            weights_temp = np.ones((line_segment_width,length))/ auto_rms**2
-                        else:
-                            weights_temp = np.ones((line_segment_width,length))
-                        
-                        az = f_lvl2['spectrometer/pixel_pointing/pixel_az'][ifeed, start:end]
-                        el = f_lvl2['spectrometer/pixel_pointing/pixel_el'][ifeed, start:end]
-                        mjd = f_lvl2['spectrometer/MJD'][start:end]
-                        ra, dec = h2e_full(az, el, mjd, comap_longitude, comap_latitude)
-
-                        tod_temp = f_lvl1['spectrometer/tod'][ifeed, band, :, start:end]
-                        # tod_lvl2 = f_lvl2['level2/binned_filtered_data'][ifeed, band, statistics_channel, start:end]
-                        # tod_lvl2_no_filter = f_lvl2['level2/binned_data'][ifeed, band, statistics_channel, start:end]
-                        # gain_filter = tod_lvl2_no_filter - tod_lvl2
-                        gain = f_lvl2['level2/vane/gain'][0,ifeed,band,:] 
-                        tsys = f_lvl2['level2/vane/system_temperature'][0,ifeed,band,:]
-                        # Calibrate the spectrum    
-                        tod_temp = tod_temp / gain[:,None] 
- 
+                    # Apply atmosphere correction
+                    atmos_offsets = f_lvl2['level2/atmosphere/offsets'][feed, band, :, iscan]
+                    atmos_tau = f_lvl2['level2/atmosphere/tau'][feed, band, :, iscan]
+                    tod_full = self.apply_atmosphere_correction(tod_full, atmos_offsets, atmos_tau, el)
 
 
-                        # Fit the gain filter solution to each channel
-                        # mask = np.isfinite(gain_filter)
-                        # if not np.any(mask):
-                        #     continue
-                        # if np.nansum(gain_filter) == 0:
-                        #     continue
-                        # Remove the atmosphere offsets and tau
-                        atmos_offsets = f_lvl2['level2/atmosphere/offsets'][ifeed,band,:,iscan]
-                        atmos_tau = f_lvl2['level2/atmosphere/tau'][ifeed,band,:,iscan] 
-                        median_offsets = np.nanmedian(tod_temp, axis=1)
+                    # Apply gain filter to the TOD 
+                    median_offsets = np.nanmedian(tod_full, axis=1)
+                    residual, mask, gains = self.gain_filter(tod_full[np.newaxis],
+                                                                tsys[np.newaxis],
+                                                                median_offsets[np.newaxis])
 
-                        tod_temp[...] -= (atmos_offsets[...,np.newaxis] +\
-                                                         atmos_tau[...,np.newaxis]/np.sin(np.radians(el)))
+                    tod_full = residual[0]  # (n_chan, length)
+                    tod_seg = tod_full[channel_start:channel_end, :]  # (line_segment_width, length)
 
-                        alpha = np.mean(alphas)
-                        sigma_red = np.mean(sigma_red) 
-                        feed = int(feed)
-                        
-                        residual, mask, gains = self.gain_filter(tod_temp[np.newaxis],
-                                                                  tsys[np.newaxis],
-                                                                  median_offsets[np.newaxis],
-                                                                  feed,
-                                                                  alpha=alpha,
-                                                                  sigma_red=sigma_red)
+                    # Apply any additional filters here, e.g.,
+                    # tod_seg = self.frequency_filter(tod_seg, *args, **kwargs) 
 
-                        # for i in range(tod_temp.shape[0]): 
-                        #     tod_temp[i] -= np.median(tod_temp[i])
-                        #     pmdl = np.poly1d(np.polyfit(gain_filter[mask],tod_temp[i,mask], 1))
-                        #     tod_temp[i,mask] -= pmdl(gain_filter[mask])
-                        #    edges = [0,1,2,3,tod_temp.shape[0]-4,tod_temp.shape[0]-3,tod_temp.shape[0]-2,tod_temp.shape[0]-1]
-                        #    pfit = np.poly1d(np.polyfit(edges, tod_temp[edges,i], 1))
-                        #    tod_temp[:,i] -= pfit(np.arange(tod_temp.shape[0]))
-                            
-                        tod_temp = residual[0,channel_start:channel_end,:]
-                        print(tod_temp.shape, weights_temp.shape, ra.shape, dec.shape)
-                        tod.append(tod_temp)
-                        weights.append(weights_temp)
-                        x.append(ra)
-                        y.append(dec) 
 
-                        # check data 
-                        mask = np.isnan(tod[-1]) | np.isnan(weights[-1])
-                        tod[-1][mask] = 0 
-                        weights[-1][mask] = 0
+                    #  Clean NaNs/Infs
+                    bad = ~np.isfinite(tod_seg) | ~np.isfinite(weights_seg)
+                    if np.any(bad):
+                        tod_seg = np.where(bad, 0.0, tod_seg)
+                        weights_seg = np.where(bad, 0.0, weights_seg)
 
-                try:
-                    tod = np.concatenate(tod,axis=1).astype(np.float32)
-                    weights = np.concatenate(weights,axis=1).astype(np.float32)
-                    x = np.concatenate(x)
-                    y = np.concatenate(y)
-                except ValueError:
-                    tod = np.array([], dtype=np.float32)
-                    weights = np.array([], dtype=np.float32)
-                    x = np.array([], dtype=np.float32)
-                    y = np.array([], dtype=np.float32)
+                    #  Append blocks
+                    tod_blocks.append(tod_seg.astype(np.float32))
+                    weight_blocks.append(weights_seg.astype(np.float32))
+                    ra_blocks.append(ra.astype(np.float64))
+                    dec_blocks.append(dec.astype(np.float64))
 
-            return tod, weights, x, y
+        # --- Concatenate across scans/feeds on the time axis
+        if len(tod_blocks) == 0:
+            return (np.array([], dtype=np.float32),
+                    np.array([], dtype=np.float32),
+                    np.array([], dtype=np.float32),
+                    np.array([], dtype=np.float32))
+
+        try:
+            tod = np.concatenate(tod_blocks, axis=1).astype(np.float32)
+            weights = np.concatenate(weight_blocks, axis=1).astype(np.float32)
+            x = np.concatenate(ra_blocks).astype(np.float32)
+            y = np.concatenate(dec_blocks).astype(np.float32)
+        except ValueError:
+            # Inconsistent shapes—return empty to be safe
+            tod = np.array([], dtype=np.float32)
+            weights = np.array([], dtype=np.float32)
+            x = np.array([], dtype=np.float32)
+            y = np.array([], dtype=np.float32)
+
+        return tod, weights, x, y
         
     def coordinate_transform(self, x, y) -> tuple:
         """

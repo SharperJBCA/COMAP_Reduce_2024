@@ -14,17 +14,18 @@ pipeline = ['modules.ProcessLevel2.CreateLevel2File.CheckLevel1FileExists.CheckL
             'modules.ProcessLevel2.NoiseStats.NoiseStats.NoiseStatsLevel2()',
             'modules.ProcessLevel2.CalibratorFitting.CalibratorFitting.CalibratorFitting()']
 
-force_run = false
+force_run = true 
 
-nprocess = 2
+nprocess = 4
 
-#source = 'fg4' #'Field%%%%%%%%%%%%' # Use Field15% for all Field150 to 159, for example. 
-source_group = 'Galactic' #'Galactic'
+source = 'jupiter' #'Field%%%%%%%%%%%%' # Use Field15% for all Field150 to 159, for example. 
+source_group = 'Calibrator' #'Calibrator' #'Galactic'
 
 # Either a list of obsids, or a path to a file 
 # If commented out the pipeline will use source and source_group to find all unprocessed
 # files. 
-target_obsid = [48827] 
+#target_obsid = [8045]
+#21600,21629,23121,23150,23298,23327,24005,23976,24035] 
 
 [modules.ProcessLevel2.CalibratorFitting.CalibratorFitting.CalibratorFitting]
 
@@ -67,7 +68,7 @@ overwrite = false
 
 [modules.ProcessLevel2.CreateLevel2File.CreateLevel2File.CreateLevel2File]
 
-output_dir = '/scratch/nas_core2/sharper/COMAP/level2_data_2024/'
+output_dir = '/scratch/nas_comap1/sharper/COMAP/level2_data_2024/'
 
 save_dir_structure = '%Y-%m/{source}/level2/'
 
@@ -98,6 +99,6 @@ level1_datasets = [['/spectrometer/MJD','1'],
 [modules.ProcessLevel2.GainFilterAndBin.GainFilterAndBin.GainFilterAndBin]
 
 n_freq_bin = 2
-overwrite = true
-filtered_binned_data_name = 'binned_filtered_data_with_prior'
-gain_filter_name = 'GainFilterWithPrior'
+overwrite = false
+filtered_binned_data_name = 'binned_filtered_data'
+gain_filter_name = 'GainFilterBase'
