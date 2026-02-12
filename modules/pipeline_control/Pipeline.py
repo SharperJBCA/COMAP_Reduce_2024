@@ -99,7 +99,7 @@ class RetryH5PY:
     
     @staticmethod
     def read_dset(dset, sl, delay=5,lock_file_directory = None):# '/home/sharper/.COMAP_PIPELINE_LOCK_FILES'):
-        return dset[*sl]
+        return dset[tuple(sl)]
 
         pid = os.getpid()
         lock_filename = f'{lock_file_directory}/{pid}.lock'
@@ -115,7 +115,7 @@ class RetryH5PY:
                 retries += 1
             else:
                 open(lock_filename, 'w').close()
-                data =  dset[*sl]
+                data =  dset[tuple(sl)]
                 os.remove(lock_filename)
                 break 
         else:
@@ -165,7 +165,7 @@ def safe_open_h5(hdf5_dset, sl, max_ops_threshold=500, retry_delay=5, max_retrie
         
         if ops_per_second is None or ops_per_second < max_ops_threshold:
             try:
-                return hdf5_dset[*sl]
+                return hdf5_dset[tuple(sl)]
             except (OSError, IOError) as e:
                 # If operation actually fails despite low load, retry
                 print(f"Error opening h5 file: {e}, retrying...")
