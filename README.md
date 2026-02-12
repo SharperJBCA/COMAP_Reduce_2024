@@ -72,6 +72,39 @@ Use the map-making configs:
 python modules/scripts/query_target.py --help
 ```
 
+### 4) Reconcile Level-2 files against SQL after disk moves / missing files
+
+```bash
+python modules/scripts/reconcile_level2_inventory.py \
+  --database databases/COMAP_manchester.db \
+  --search-root /mnt/disk1/COMAP/level2 /mnt/disk2/COMAP/level2 \
+  --output-dir reconcile_reports
+```
+
+Default mode is dry-run. Add `--write` to:
+
+- clear `level2_path` rows when a Level-2 file cannot be found,
+- remap stale `level2_path` values to discovered on-disk paths.
+
+The script writes:
+
+- `missing_level2_rows.tsv` (obsids with DB entry but no file found)
+- `missing_level2_obsids.txt` (ready for Level-2 pipeline obsid list input)
+- `missing_level2_level1_paths.txt` (Level-1 paths for reprocessing workflows)
+- `remapped_level2_rows.tsv`
+- `level2_files_not_in_db.tsv`
+- `duplicate_level2_files.tsv`
+
+### 5) Quick SQL visibility tooling
+
+Use `db_overview.py` for quick operational summaries:
+
+```bash
+python modules/scripts/db_overview.py --database databases/COMAP_manchester.db summary
+python modules/scripts/db_overview.py --database databases/COMAP_manchester.db missing-level2 --limit 500
+python modules/scripts/db_overview.py --database databases/COMAP_manchester.db path-search /new/disk/path
+```
+
 ---
 
 ## Additional operations
