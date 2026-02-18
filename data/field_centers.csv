@@ -1,0 +1,56 @@
+field_name,ra,dec,group,notes
+Field00,18:29:9.54,-10:43:35.35,galactic_plane,Main galactic field
+Field01,18:31:53.95,-9:26:10.21,galactic_plane,Main galactic field
+Field02,18:34:36.91,-8:08:46.36,galactic_plane,Main galactic field
+Field03,18:33:7.39,-8:51:23.69,galactic_plane,Main galactic field
+Field04,18:35:49.63,-7:34:2.08,galactic_plane,Main galactic field
+Field05,18:38:30.67,-6:16:41.42,galactic_plane,Main galactic field
+Field06,18:37:1.87,-6:59:21.61,galactic_plane,Main galactic field
+Field07,18:39:42.67,-5:42:2.54,galactic_plane,Main galactic field
+Field08,18:40:59.95,-5:04:42.39,galactic_plane,Main galactic field
+Field09,18:42:22.51,-4:24:44.10,galactic_plane,Main galactic field
+Field10,18:45:1.63,-3:07:26.19,galactic_plane,Main galactic field
+Field11,18:43:33.79,-3:50:8.70,galactic_plane,Main galactic field
+Field11b,18:31:26.50,-02:06:22.1,galactic_plane,Main galactic field
+Field12,18:46:12.67,-2:32:51.53,galactic_plane,Main galactic field
+Field13,18:48:51.31,-1:15:34.57,galactic_plane,Main galactic field
+Field14,18:50:7.94,00:38:11.88,galactic_plane,Main galactic field
+Field15,18:51:24.54,00:00:49.13,galactic_plane,Main galactic field
+Field16,18:47:23.71,-1:58:17.71,galactic_plane,Main galactic field
+Field17,18:52:50.35,00:41:0.86,galactic_plane,Main galactic field
+Field18,18:54:17.95,01:23:43.91,galactic_plane,Main galactic field
+Field19,18:55:45.55,02:06:26.76,galactic_plane,Main galactic field
+Field20,18:57:13.15,02:49:9.30,galactic_plane,Main galactic field
+Field21,18:58:40.99,03:31:51.42,galactic_plane,Main galactic field
+Field22,19:00:9.07,04:14:33.03,galactic_plane,Main galactic field
+Field23,19:01:37.15,04:57:14.02,galactic_plane,Main galactic field
+Field24,19:03:5.47,05:39:54.27,galactic_plane,Main galactic field
+Field25,19:04:34.03,06:22:33.69,galactic_plane,Main galactic field
+Field26,19:06:2.83,07:05:12.16,galactic_plane,Main galactic field
+Field27,19:07:31.87,07:47:49.57,galactic_plane,Main galactic field
+Field28,19:09:1.15,08:30:25.82,galactic_plane,Main galactic field
+Field29,19:10:30.91,09:13:0.79,galactic_plane,Main galactic field
+Field30,19:12:0.91,09:55:34.37,galactic_plane,Main galactic field
+Field015.26+00.0,18:18:22.53,-15:40:25.81,galactic_plane,Galactic center extension
+Field016.06+00.0,18:19:56.65,-14:58:08.03,galactic_plane,Galactic center extension
+Field016.86+00.0,18:21:30.16,-14:15:47.85,galactic_plane,Galactic center extension
+Field017.66+00.0,18:23:03.08,-13:33:25.41,galactic_plane,Galactic center extension
+Field018.46+00.0,18:24:35.44,-12:51:00.83,galactic_plane,Galactic center extension
+Field019.26+00.0,18:26:07.30,-12:08:34.25,galactic_plane,Galactic center extension
+Field020.06+00.0,18:27:38.66,-11:26:05.79,galactic_plane,Galactic center extension
+fg6,18:44:56.4,-01:59:52,galactic_plane,Equivalent to Field13
+FG12,21:40:52.68,57:39:52.90,galactic_plane,IC1396 galactic product input
+fg12,21:40:52.68,57:39:52.90,galactic_plane,IC1396 galactic product input
+FG12a,21:45:25.94,58:11:09.67,galactic_plane,IC1396 extension
+FG12b,21:36:27.01,57:08:02.25,galactic_plane,IC1396 extension
+FG12c,21:32:08.71,56:35:39.41,galactic_plane,IC1396 extension
+fg1,9:04:22.9,+06:17:13.8,targeted,Test Galactic
+fg2,05:52:00.0,-04:00:00.0,targeted,Orion
+fg3,05:34:00.0,+22:00:00.0,targeted,Tau A
+fg4,00:42:44.35,+41:16:08.634,targeted,M31
+fg5,05:35:17.3,-05:23:28,targeted,M42
+fg7,05:31:0.0,+12:24:38.0,targeted,Perseus D
+fg8,05:35:08,+09:56:02,targeted,Lambda Orionis Star
+fg9,05:30:18.0,+12:46:00.0,targeted,Lambda Orionis/Barnard 30
+fg10,05:35:14.2,-05:22:46.5,targeted,Orion-KL
+fg11,03:47:40.0,+28:54:06,targeted,California
