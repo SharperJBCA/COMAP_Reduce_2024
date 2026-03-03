@@ -146,6 +146,7 @@ def run_mapmaking_chunk(args: argparse.Namespace, chunk_files: list[str], chunk_
     config_file = work_dir / f"chunk_{chunk_idx:03d}_config.toml"
 
     output_filename = f"{args.map_name}_chunk{chunk_idx:03d}_band{args.band:02d}.fits"
+    log_file = Path(args.output_dir).resolve() / f"{args.map_name}_chunk{chunk_idx:03d}.log"
     params = {
         "band": args.band,
         "wcs_def": args.wcs_def,
@@ -155,7 +156,9 @@ def run_mapmaking_chunk(args: argparse.Namespace, chunk_files: list[str], chunk_
         "feeds": list(args.feeds),
         "map_name": f"{args.map_name}_chunk{chunk_idx:03d}",
         "tod_data_name": args.tod_data_name,
-        "log_file_name": None,
+        # run_map_making.py expects a path-like log filename and unconditionally
+        # creates its parent directory in setup_logging(...).
+        "log_file_name": str(log_file),
         "sigma_red_cutoff": args.sigma_red_cutoff,
         "database": str(Path(args.database).resolve()),
         "file_list": str(file_list),
