@@ -4,7 +4,7 @@
 Expected FITS HDU layout:
 - HDU 0: primary map (for WCS)
 - HDU 3: expected white-noise map
-- HDU 4: hits map
+- HDU 2: hits map   (NOTE: your original comment said HDU 4, but code uses HDU 2)
 """
 
 from __future__ import annotations
@@ -15,10 +15,12 @@ from pathlib import Path
 from typing import Iterable
 
 import numpy as np
+import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs import WCS
-import astropy.units as u
+
+import matplotlib.pyplot as plt
 
 GALACTIC_KEYWORDS = ("fg12", "fg6", "gfield", "field")
 
@@ -44,8 +46,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--aperture-pix",
         type=float,
-        default=1.5,
-        help="Aperture radius in pixels for robust median summaries (default: 1.5)",
+        default=10.5,
+        help="Aperture radius in pixels for robust median summaries (default: 10.5)",
     )
     parser.add_argument(
         "--output",
@@ -125,35 +127,24 @@ def measure_fields(
             "group": row["group"],
             "ra": row["ra"],
             "dec": row["dec"],
-            "x_pix": float(x),
-            "y_pix": float(y),
+            "x_pix": int(float(x)),
+            "y_pix": int(float(y)),
             "inside_map": inside,
-            "rms_center": np.nan,
-            "hits_center": np.nan,
             "rms_ap_med": np.nan,
-            "rms_ap_p16": np.nan,
-            "rms_ap_p84": np.nan,
             "hits_ap_med": np.nan,
-            "hits_ap_p16": np.nan,
-            "hits_ap_p84": np.nan,
             "n_ap_pix": 0,
         }
 
         if inside:
-            result["rms_center"] = float(rms_map[yi, xi])
-            result["hits_center"] = float(hits_map[yi, xi])
-
             mask = circular_mask(rms_map.shape, y, x, aperture_pix)
             rms_vals = rms_map[mask]
             hits_vals = hits_map[mask]
-            rms_med, rms_p16, rms_p84 = finite_stats(rms_vals)
-            hits_med, hits_p16, hits_p84 = finite_stats(hits_vals)
-            result["rms_ap_med"] = rms_med
-            result["rms_ap_p16"] = rms_p16
-            result["rms_ap_p84"] = rms_p84
-            result["hits_ap_med"] = hits_med
-            result["hits_ap_p16"] = hits_p16
-            result["hits_ap_p84"] = hits_p84
+
+            rms_med, _, _ = finite_stats(rms_vals)
+            hits_med, _, _ = finite_stats(hits_vals)
+
+            result["rms_ap_med"] = float(rms_med)
+            result["hits_ap_med"] = float(hits_med)
             result["n_ap_pix"] = int(mask.sum())
 
         out.append(result)
@@ -172,6 +163,89 @@ def write_output(path: Path, rows: list[dict[str, float | str | int | bool]]) ->
         writer.writerows(rows)
 
 
+def _rows_to_gal_longitude(rows: list[dict[str, float | str | int | bool]]) -> tuple[np.ndarray, np.ndarray]:
+    """Return (l_deg, ok_mask) from rows, computing l from ra/dec."""
+    l_list = []
+    ok = []
+
+    for r in rows:
+        inside = bool(r.get("inside_map", False))
+        ra = str(r["ra"])
+        dec = str(r["dec"])
+        coord = SkyCoord(ra, dec, unit=(u.hourangle, u.deg), frame="icrs")
+        l_deg = coord.galactic.l.wrap_at(360 * u.deg).deg  # 0..360-ish
+
+        l_list.append(l_deg)
+        ok.append(inside)
+
+    return np.asarray(l_list, dtype=float), np.asarray(ok, dtype=bool)
+
+
+def plot_galactic_plane(rows: list[dict[str, float | str | int | bool]], out_csv: Path) -> None:
+    """If rows are galactic_plane, write RMS vs l and hits vs l plots beside the CSV."""
+    # Only plot for galactic_plane group rows (and only those inside map with finite values)
+    #groups = {str(r.get("group", "")).strip().lower() for r in rows}
+    #if groups != {"galactic_plane"} and "galactic_plane" not in groups:
+    #    return
+
+    l_deg, inside = _rows_to_gal_longitude(rows)
+
+    names = np.asarray([str(r["field_name"]) for r in rows])
+    rms = np.asarray([float(r["rms_ap_med"]) for r in rows], dtype=float)
+    hits = np.asarray([float(r["hits_ap_med"]) for r in rows], dtype=float)
+
+    ok_rms = inside & np.isfinite(l_deg) & np.isfinite(rms)
+    ok_hits = inside & np.isfinite(l_deg) & np.isfinite(hits)
+
+    # Sort by longitude for nicer labeling/reading
+    def _sorted(arr_mask: np.ndarray):
+        idx = np.argsort(l_deg[arr_mask])
+        return (
+            l_deg[arr_mask][idx],
+            idx,
+        )
+
+    # --- RMS vs l ---
+    if np.any(ok_rms):
+        l1, idx1 = _sorted(ok_rms)
+        rms1 = rms[ok_rms][idx1]
+        names1 = names[ok_rms][idx1]
+
+        plt.figure(figsize=(24,8))
+        plt.scatter(l1, rms1)
+        for x, y, n in zip(l1, rms1, names1):
+            plt.annotate(n, (x, y), textcoords="offset points", xytext=(4, 4), fontsize=8)
+        plt.xlabel("Galactic longitude l (deg)")
+        plt.ylabel("RMS aperture median")
+        plt.title("Galactic plane: RMS vs Galactic longitude")
+        plt.grid(True, alpha=0.3)
+
+        out_png = out_csv.with_name(out_csv.stem.replace("_field_metrics", "") + "_rms_vs_galactic_longitude.png")
+        plt.tight_layout()
+        plt.savefig(out_png, dpi=200)
+        plt.close()
+
+    # --- Hits vs l ---
+    if np.any(ok_hits):
+        l2, idx2 = _sorted(ok_hits)
+        hits2 = hits[ok_hits][idx2]
+        names2 = names[ok_hits][idx2]
+
+        plt.figure(figsize=(24,8))
+        plt.scatter(l2, hits2)
+        for x, y, n in zip(l2, hits2, names2):
+            plt.annotate(n, (x, y), textcoords="offset points", xytext=(4, 4), fontsize=8)
+        plt.xlabel("Galactic longitude l (deg)")
+        plt.ylabel("Hits aperture median")
+        plt.title("Galactic plane: Hits vs Galactic longitude")
+        plt.grid(True, alpha=0.3)
+
+        out_png = out_csv.with_name(out_csv.stem.replace("_field_metrics", "") + "_hits_vs_galactic_longitude.png")
+        plt.tight_layout()
+        plt.savefig(out_png, dpi=200)
+        plt.close()
+
+
 def main() -> None:
     args = parse_args()
 
@@ -182,11 +256,16 @@ def main() -> None:
     with fits.open(args.map) as hdul:
         wcs = build_wcs(hdul[0].header)
         rms_map = extract_2d(hdul[3].data)
-        hits_map = extract_2d(hdul[4].data)
+        hits_map = extract_2d(hdul[2].data)
 
     rows = measure_fields(fields, wcs, rms_map, hits_map, args.aperture_pix)
     output = args.output or args.map.with_name(f"{args.map.stem}_field_metrics.csv")
     write_output(output, rows)
+
+    print(rows)
+    # If the selection corresponds to galactic plane, output the two plots
+    if is_galactic_plane_map(source_name):
+        plot_galactic_plane(rows, output)
 
     print(f"Measured {len(rows)} fields from source selector '{source_name}'.")
     print(f"Output: {output}")

@@ -192,15 +192,18 @@ class Level2Pipeline:
         else:
             final_files = []
             for fileinfo in tqdm(level1_filelist, desc='Checking Level 2 Files for file list'):
-                if fileinfo.level2_path is None: # Is the level 2 path in the database?
-                    final_files.append(fileinfo)
-                else:
-                    if not os.path.exists(fileinfo.level2_path): # Does the level 2 file exist?
+                try:
+                    if fileinfo.level2_path is None: # Is the level 2 path in the database?
                         final_files.append(fileinfo)
                     else:
-                        with RetryH5PY(fileinfo.level2_path, 'r') as f:  # If the file exists, check if it has been processed
-                            if (not 'level2/binned_filtered_data' in f) or (self.parameters['modules']['ProcessLevel2']['GainFilterAndBin']['GainFilterAndBin']['GainFilterAndBin']['overwrite'] == True):
-                                final_files.append(fileinfo)
+                        if not os.path.exists(fileinfo.level2_path): # Does the level 2 file exist?
+                            final_files.append(fileinfo)
+                        else:
+                            with RetryH5PY(fileinfo.level2_path, 'r') as f:  # If the file exists, check if it has been processed
+                                if (not 'level2/binned_filtered_data' in f) or (self.parameters['modules']['ProcessLevel2']['GainFilterAndBin']['GainFilterAndBin']['GainFilterAndBin']['overwrite'] == True):
+                                    final_files.append(fileinfo)
+                except BadCOMAPFile:
+                    continue
                         
         print('TOTAL FILES', len(final_files), 'files to process')
 

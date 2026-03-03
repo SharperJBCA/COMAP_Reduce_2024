@@ -158,11 +158,8 @@ pipeline_m31 = [
 ]
 
 pipeline = [
-            'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], n_processes=4, band=0, wcs_def="M31", source="fg4", source_group="Foreground", map_name="comap_fg4_071225", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db")',
-#            'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], n_processes=4, band=0, wcs_def="M31", source="fg4", source_group="Foreground", map_name="comap_fg4_191125", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db")',
-#                'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(n_processes=4, band=0, wcs_def="Galactic", source=["Field77"], map_name="comap_alr-2_Field77_191125", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", min_obsid=7000)',
-#                'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(n_processes=4, band=0, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_alr-2_galactic_011225", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", min_obsid=7000)',
-# 'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(band=0, wcs_def="Galactic", source=["Field015.26+00.0","Field016.06+00.0","Field016.86+00.0","Field017.66+00.0","Field018.46+00.0","Field019.26+00.0","Field020.06+00.0"], map_name="comap_M16_pointingfix_111125", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4)',
+#            'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], n_processes=4, band=0, wcs_def="M31", source="fg4", source_group="Foreground", map_name="comap_fg4_160226", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db")',
+           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=0, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_160226", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4)',
 ]
 
 [modules.MapMaking.MapMakingModules.CreateLineMap.CreateLineMap]
