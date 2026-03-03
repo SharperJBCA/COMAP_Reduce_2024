@@ -105,6 +105,34 @@ python modules/scripts/db_overview.py --database databases/COMAP_manchester.db m
 python modules/scripts/db_overview.py --database databases/COMAP_manchester.db path-search /new/disk/path
 ```
 
+### 6) Analyze chunked map integration depth
+
+Run destriped map-making on ordered file chunks and track cumulative RMS-vs-hits:
+
+```bash
+python modules/scripts/analyze_chunked_integration.py \
+  --database databases/COMAP_manchester.db \
+  --source fg6 \
+  --min-obsid 12000 \
+  --max-obsid 18000 \
+  --chunk-size 25 \
+  --band 0 \
+  --feeds 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 \
+  --wcs-def Galactic \
+  --offset-length 100 \
+  --sigma-red-cutoff 0.4 \
+  --center-lon 120.0 \
+  --center-lat 0.0 \
+  --center-radius-pix 10 \
+  --annulus-rin-pix 20 \
+  --annulus-rout-pix 35 \
+  --output-dir outputs/chunked_depth \
+  --plot-name rms_vs_hits.png \
+  --csv-name rms_vs_hits.csv
+```
+
+Outputs include a per-stage CSV (`n_chunks`, `n_files`, center RMS stats, annulus mean hits) and a two-panel (linear + log-log) PNG plot with an `A/sqrt(hits)` reference curve.
+
 ---
 
 ## Additional operations
