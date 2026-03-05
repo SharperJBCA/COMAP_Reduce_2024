@@ -192,13 +192,15 @@ def make_plot(df: pd.DataFrame, out_plot: Path, title: str | None = None) -> Non
         ax.set_ylabel("Flux density (Jy)")
         ax.text(0.5, 0.5, "No matching rows", ha="center", va="center", transform=ax.transAxes)
     else:
+        all_source_fluxes = []
         for source, g in df.groupby("source"):
             gg = g.sort_values("date_utc")
+            all_source_fluxes.append(np.median(gg["flux_density_jy"]))
             ax.plot(
                 gg["date_utc"],
                 gg["flux_density_jy"],
                 marker="o",
-                linestyle="-",
+                linestyle="none",
                 linewidth=1.0,
                 markersize=3,
                 label=source,
@@ -209,6 +211,9 @@ def make_plot(df: pd.DataFrame, out_plot: Path, title: str | None = None) -> Non
         ax.set_ylabel("Flux density (Jy)")
         ax.grid(alpha=0.3)
         ax.legend(loc="best")
+        all_source_fluxes = all_source_fluxes[0]#np.nanmedian(np.concatenate(all_source_fluxes))
+        ax.set_ylim((all_source_fluxes*0.9,all_source_fluxes*1.1))
+            #np.nanpercentile(all_source_fluxes,2),np.nanpercentile(all_source_fluxes,90)))
 
     fig.autofmt_xdate()
     fig.tight_layout()

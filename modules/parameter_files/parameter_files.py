@@ -55,8 +55,13 @@ def parse_function_string(function_str):
                 value = value[1:-1]
             else:
                 try:
-                    # Try to convert to a number
-                    value = int(value)
+                    if value == 'False':
+                        value = False 
+                    elif value == 'True':
+                        value = True 
+                    else:
+                        # Try to convert to a number
+                        value = int(value)
                 except ValueError:
                     try:
                         value = float(value)

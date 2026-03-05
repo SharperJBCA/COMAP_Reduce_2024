@@ -56,7 +56,8 @@ def load_data(parameters):
 
     if local_data.read_files([file_list[i] for i in range(rank_start, rank_end)],
                              use_flags=False, 
-                             feeds=parameters['feeds']):
+                             feeds=parameters['feeds'],
+                             apply_pointing_correction=parameters['apply_pointing_correction']):
         return local_data
     else:
         return None

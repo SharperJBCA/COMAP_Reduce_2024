@@ -408,7 +408,7 @@ class Level2DataReader:
 
     # ------------- per-scan processing -------------
 
-    def _process_scan(self, f, ifeed: int, feed: int, start: int, end: int, mjd0: float) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    def _process_scan(self, f, ifeed: int, feed: int, start: int, end: int, mjd0: float, apply_pointing_correction: bool = False) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
         """
         Returns (tod, weights_solver, gl, gb) for this scan (length is multiple of L).
         We modify weights for the solver only; map weights are derived later.
@@ -449,9 +449,12 @@ class Level2DataReader:
         az = f["spectrometer/pixel_pointing/pixel_az"][ifeed, start:start + length]
         el = f["spectrometer/pixel_pointing/pixel_el"][ifeed, start:start + length]
         # Apply offset corrections 
-        #az_offset_deg, el_offset_deg = pointing_offsets_deg(az, el, self.pointing_params[ifeed])
-        #az = az - az_offset_deg
-        #el = el - el_offset_deg
+        print('POINTING CORRECTION?', apply_pointing_correction)
+        if apply_pointing_correction:
+            print('HELLO')
+            az_offset_deg, el_offset_deg = pointing_offsets_deg(az, el, self.pointing_params[ifeed])
+            az = az - az_offset_deg
+            el = el - el_offset_deg
 
         ra, dec = h2e_full(az, el, mjd, comap_longitude, comap_latitude)
         gl, gb = self._coordinate_transform(ra, dec)
@@ -528,7 +531,7 @@ class Level2DataReader:
 
     # ------------- accumulate one file -------------
 
-    def _accumulate_file(self, file: str, feeds_keep: Sequence[int], use_flags: bool):
+    def _accumulate_file(self, file: str, feeds_keep: Sequence[int], use_flags: bool, apply_pointing_correction: bool = False):
         obsid = int(os.path.basename(file).split("-")[1])
         if self.database: 
             quality_flags = self.database.get_quality_flags(obsid)
@@ -570,7 +573,7 @@ class Level2DataReader:
                     if self.jackknife is not None and group != self.jackknife:
                         continue
 
-                    out = self._process_scan(f,ifeed, feed, int(start), int(end), float(f["spectrometer/MJD"][0]))
+                    out = self._process_scan(f,ifeed, feed, int(start), int(end), float(f["spectrometer/MJD"][0]), apply_pointing_correction)
                     if out is None:
                         continue
 
@@ -618,7 +621,7 @@ class Level2DataReader:
 
     # ------------- top-level -------------
 
-    def read_files(self, files: Sequence[str], *, feeds: Optional[Sequence[int]] = None, use_flags: bool = False) -> bool:
+    def read_files(self, files: Sequence[str], *, feeds: Optional[Sequence[int]] = None, use_flags: bool = False, apply_pointing_correction: bool = False) -> bool:
         if self.wcs is None:
             raise RuntimeError("Call setup_wcs(...) before read_files().")
 
@@ -637,7 +640,7 @@ class Level2DataReader:
         for i, file in enumerate(files):
             if rank == 0 and (i % max(1, len(files) // 10) == 0):
                 logging.info(f"[reader] {i}/{len(files)}")
-            self._accumulate_file(file, feeds_keep, use_flags)
+            self._accumulate_file(file, feeds_keep, use_flags, apply_pointing_correction)
 
         # MPI reduce the maps
         sum_map_all_inplace(self.data.sum_map)

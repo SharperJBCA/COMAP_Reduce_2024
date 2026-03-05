@@ -448,14 +448,15 @@ class CalibratorFitting(BaseCOMAPModule):
     def run(self, file_info : COMAPData) -> None:
         """ """
         #if  file_info.source  == 'jupiter':
-        #    logging.info(f'Calibrator fitting not implemented for {file_info.source}')
+        logging.info(f'Calibrator fitting for {file_info.source}')
         #    return 
         if not file_info.source_group == 'Calibrator':
             return
 
         if self.already_processed(file_info, self.overwrite):
             return
-        
+        logging.info(f'Starting calibrator fitting for {file_info.source}')
+
         self.fit_sources(file_info)
         self.save_data(file_info)
 

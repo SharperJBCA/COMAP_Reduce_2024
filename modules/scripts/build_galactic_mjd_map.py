@@ -16,7 +16,7 @@ from astropy.io import fits
 from astropy.io.fits import Header
 from astropy.wcs import WCS
 
-from modules.utils.Coordinates import comap_latitude, comap_longitude, h2e_full
+from modules.utils.Coordinates_py import comap_latitude, comap_longitude, h2e_full
 
 
 DEFAULT_WCS_PATHS = [

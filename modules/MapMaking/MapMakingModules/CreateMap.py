@@ -59,6 +59,7 @@ class CreateMap:
         sun_elevation_threshold: float = 0.0,
         split_groups: Dict[str, Sequence[str]] = None,
         config_dir: str = "modules/MapMaking/map_making_configs",
+        apply_pointing_correction: bool = False,
         **kwargs,
     ) -> None:
         logging.info("Initializing CreateMap")
@@ -87,7 +88,6 @@ class CreateMap:
         self.config_dir = Path(self.working_dir) / config_dir
         self.config_dir.mkdir(parents=True, exist_ok=True)
         os.makedirs(self.output_dir, exist_ok=True)
-
         self.base_parameters = {
             "band": band,
             "wcs_def": wcs_def,
@@ -106,6 +106,7 @@ class CreateMap:
             "calib_path": calib_path,
             "jackknife_odd_even": jackknife_odd_even,
             "split_mode": split_mode,
+            "apply_pointing_correction":apply_pointing_correction,
             "created_utc": datetime.now(timezone.utc).isoformat(),
         }
 
