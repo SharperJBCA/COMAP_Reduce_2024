@@ -1,0 +1,22 @@
+[Master] 
+
+log_file = 'logs/{}_main_run.log'
+
+sql_database = 'databases/COMAP_manchester.db'
+
+min_obsid = 7000#45200#
+max_obsid = 101430#30000#
+
+pipeline = [
+            'modules.MapMaking.MapMakingModules.CreateLineMap.CreateLineMap(line_frequency=31.22332, wcs_def="Galactic", source="Field18", source_group="Galactic", map_name="comap_galactic_line_H59_Field18_220725", database_file="databases/COMAP_manchester.db")',
+        ] 
+
+
+[modules.MapMaking.MapMakingModules.CreateLineMap.CreateLineMap]
+
+output_dir = '/scratch/nas_core2/sharper/COMAP/level2_data_2024/level2_maps/all_feeds'
+
+wcs_def_file = 'parameter_files/wcs_definitions.toml'
+
+# Control feeds to be used using observer flags rather than this list. 
+feeds = [1,2,3,4,5,6,7,8,9,11,12,13,14,15,16,17,18,19]

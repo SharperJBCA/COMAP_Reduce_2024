@@ -10,7 +10,7 @@ from modules.pipeline_control.Pipeline import BadCOMAPFile, RetryH5PY,BaseCOMAPM
 class CheckLevel1FileExists(BaseCOMAPModule):
 
     def __init__(self, **kwargs):
-        pass 
+        super().__init__()
 
     def run(self, file_info : COMAPData) -> None:
         print('HELLO!')

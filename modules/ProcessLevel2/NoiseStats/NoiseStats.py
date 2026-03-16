@@ -22,6 +22,7 @@ from modules.utils.median_filter import medfilt
 class NoiseStatsLevel1(BaseCOMAPModule):
 
     def __init__(self, plot=False, output_dir='outputs/NoiseStats') -> None:
+        super().__init__()
         self.NCHANNELS = 1024
         self.NBANDS = 4
         self.NFEEDS = 19
@@ -165,7 +166,7 @@ class NoiseStatsLevel1(BaseCOMAPModule):
                     continue 
 
                 #feed_data = f[self.target_tod_dataset][ifeed, ...]
-                feed_data = RetryH5PY.read_dset(f[self.target_tod_dataset], [slice(ifeed, ifeed+1), slice(None), slice(None), slice(None)],lock_file_directory=self.lock_file_path)[0,...]
+                feed_data = RetryH5PY.read_dset(f[self.target_tod_dataset], [slice(ifeed, ifeed+1), slice(None), slice(None), slice(None)])[0,...]
 
                 indices = itertools.product(
                     range(self.NBANDS),
@@ -203,6 +204,7 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
                  n_channels=2, output_group_name='level2_noise_stats', 
                  target_tod_datasets=['level2/binned_filtered_data'],
                  overwrite=False) -> None:
+        super().__init__()
         self.n_channels = n_channels
         self.NFEEDS = 19
         self.NBANDS = 4 
@@ -310,7 +312,6 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
                     grp = f[output_group_name]
                     if key in grp:
                         del grp[key]
-                    print('saving',output_group_name,key,statistics[key].shape,statistics[key][0,0,0,0])
                     grp.create_dataset(f'{key}', data=statistics[key])
 
         # BUT WAIT! We also store them in the database 
@@ -434,6 +435,8 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
                         auto_rms = self.auto_rms(data)
                         data_filtered = data - np.array(medfilt.medfilt(data*1, 50)) 
                         fill_in = (np.abs(data_filtered) < 3*auto_rms) 
+                        if (np.sum(fill_in)/data.size) < 0.98: # only fill in if there is 2% of the data bad, other wise skip this channel
+                            continue
                         data[~fill_in] = np.interp(np.where(~fill_in)[0], np.where(fill_in)[0], data[fill_in])
                         sigma_white, sigma_red, alpha = self.fnoise_fit(data, auto_rms) 
 

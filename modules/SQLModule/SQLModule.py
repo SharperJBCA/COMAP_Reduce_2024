@@ -139,7 +139,7 @@ class QualityFlag(Base):
 #     return COMAPFeed 
     
 
-class SQLModule: 
+class SQLModule:
 
     def __init__(self) -> None:
         self.database = None 
@@ -188,6 +188,143 @@ class SQLModule:
             self._disconnect()
             return result
         return wrapper
+
+    def clear_level2_info(self, obsid: int, clear_quality_stats: bool = False) -> None:
+        """
+        Clear Level-2 information for an obsid (without deleting any files).
+        Optionally clears QualityFlag statistics but keeps the flags and is_good state.
+        """
+        self._connect()
+
+        # Null-out the Level-2 path
+        self.session.query(COMAPData).filter_by(obsid=obsid).update({'level2_path': None})
+
+        if clear_quality_stats:
+            # Set all stat fields on QualityFlag to NULL
+            self.session.query(QualityFlag).filter_by(obsid=obsid).update({
+                'filtered_red_noise': None,
+                'filtered_white_noise': None,
+                'filtered_auto_rms': None,
+                'filtered_noise_index': None,
+                'unfiltered_red_noise': None,
+                'unfiltered_white_noise': None,
+                'unfiltered_auto_rms': None,
+                'unfiltered_noise_index': None,
+                'n_spikes': None,
+                'n_nan_values': None,
+                'mean_atm_temp': None,
+                'comment': None,  # optional; drop if you want to keep comments
+            })
+
+        self.session.commit()
+        self._disconnect()
+
+
+    def scrub_missing_level2_paths(self, clear_quality_stats: bool = False) -> list[int]:
+        """
+        For every row with a non-empty Level-2 path, check if the file exists.
+        If it does not, clear Level-2 info (and optionally stats).
+        Returns a list of obsids that were scrubbed.
+        """
+        import os
+
+        self._connect()
+        rows = (self.session.query(COMAPData.obsid, COMAPData.level2_path)
+                .filter(COMAPData.level2_path.isnot(None))
+                .filter(COMAPData.level2_path != "")
+                .all())
+
+        missing = []
+        for obsid, path in rows:
+            try:
+                exists = os.path.exists(path)
+            except Exception:
+                exists = False
+            if not exists:
+                # Clear within the same transaction/session for efficiency
+                self.session.query(COMAPData).filter_by(obsid=obsid).update({'level2_path': None})
+                if clear_quality_stats:
+                    self.session.query(QualityFlag).filter_by(obsid=obsid).update({
+                        'filtered_red_noise': None,
+                        'filtered_white_noise': None,
+                        'filtered_auto_rms': None,
+                        'filtered_noise_index': None,
+                        'unfiltered_red_noise': None,
+                        'unfiltered_white_noise': None,
+                        'unfiltered_auto_rms': None,
+                        'unfiltered_noise_index': None,
+                        'n_spikes': None,
+                        'n_nan_values': None,
+                        'mean_atm_temp': None,
+                        'comment': None,
+                    })
+                missing.append(obsid)
+
+        if missing:
+            self.session.commit()
+        self._disconnect()
+        return missing
+
+    def remap_level2_paths(self, old_prefix: str, new_prefix: str,
+                           dry_run: bool = True,
+                           require_new_path_exists: bool = False) -> dict:
+        """
+        Bulk-update Level-2 paths when files have moved to a new disk.
+
+        Args:
+            old_prefix: Existing path prefix in the database.
+            new_prefix: Replacement prefix.
+            dry_run: If True, report changes without writing to the database.
+            require_new_path_exists: If True, only update rows where the remapped
+                path exists on disk.
+
+        Returns:
+            Summary dictionary with counters and a small sample of remapped entries.
+        """
+        old_prefix = old_prefix.rstrip('/')
+        new_prefix = new_prefix.rstrip('/')
+
+        self._connect()
+        rows = (self.session.query(COMAPData.obsid, COMAPData.level2_path)
+                .filter(COMAPData.level2_path.isnot(None))
+                .filter(COMAPData.level2_path != "")
+                .all())
+
+        updated = 0
+        skipped_missing = 0
+        candidates = 0
+        sample = []
+
+        for obsid, old_path in rows:
+            if not isinstance(old_path, str) or not old_path.startswith(old_prefix):
+                continue
+
+            candidates += 1
+            suffix = old_path[len(old_prefix):]
+            new_path = f"{new_prefix}{suffix}"
+
+            if require_new_path_exists and (not os.path.exists(new_path)):
+                skipped_missing += 1
+                continue
+
+            if not dry_run:
+                self.session.query(COMAPData).filter_by(obsid=obsid).update({'level2_path': new_path})
+            updated += 1
+
+            if len(sample) < 10:
+                sample.append({'obsid': obsid, 'old_path': old_path, 'new_path': new_path})
+
+        if (not dry_run) and updated > 0:
+            self.session.commit()
+
+        self._disconnect()
+        return {
+            'dry_run': dry_run,
+            'candidates': candidates,
+            'updated': updated,
+            'skipped_missing_new_path': skipped_missing,
+            'sample': sample,
+        }
 
     def update_single_value(self, obsid: int, column_name: str, new_value: any) -> None:
         """
@@ -402,7 +539,7 @@ class SQLModule:
         if source_group:
             query = query.filter_by(source_group=source_group)
         if source:
-            query = query.filter(and_(COMAPData.source.like(source)))
+            query = query.filter_by(source=source) #(and_(COMAPData.source.like(source)))
 
         query = query.filter(COMAPData.obsid >= min_obsid)
 
@@ -454,6 +591,45 @@ class SQLModule:
                 .all())
         self._disconnect()
         return {(flag.pixel, flag.frequency_band): flag for flag in flags}
+
+    def get_observation_snapshot(self, obsid: int) -> dict:
+        """
+        Return SQL-backed metadata for one observation, including quality flags.
+        Useful for serializing into a Level-2 HDF5 file for portability.
+        """
+        self._connect()
+        data = self.session.query(COMAPData).filter_by(obsid=obsid).first()
+        if data is None:
+            self._disconnect()
+            return {}
+
+        flags = (self.session.query(QualityFlag)
+                .filter_by(obsid=obsid)
+                .all())
+
+        snapshot = {k: v for k, v in data.__dict__.items() if not k.startswith('_')}
+        snapshot['quality_flags'] = [
+            {
+                'pixel': f.pixel,
+                'frequency_band': f.frequency_band,
+                'is_good': bool(f.is_good),
+                'comment': f.comment,
+                'filtered_red_noise': f.filtered_red_noise,
+                'filtered_white_noise': f.filtered_white_noise,
+                'filtered_auto_rms': f.filtered_auto_rms,
+                'filtered_noise_index': f.filtered_noise_index,
+                'unfiltered_red_noise': f.unfiltered_red_noise,
+                'unfiltered_white_noise': f.unfiltered_white_noise,
+                'unfiltered_auto_rms': f.unfiltered_auto_rms,
+                'unfiltered_noise_index': f.unfiltered_noise_index,
+                'n_spikes': f.n_spikes,
+                'n_nan_values': f.n_nan_values,
+                'mean_atm_temp': f.mean_atm_temp,
+            }
+            for f in flags
+        ]
+        self._disconnect()
+        return snapshot
 
     def get_bad_data_points(self, obsid: int) -> list[tuple[int, int, str | None]]:
         """
@@ -540,29 +716,3 @@ class SQLModule:
             self.update_quality_statistics(obsid, pixel, freq_band, stats)
 
 db = SQLModule() 
-
-
-class OldPathModule:
-    def __init__(self) -> None:
-        self.database = None
-
-    def connect(self, database_path: str) -> None:
-        self.database = sa.create_engine(f'sqlite:///{database_path}')
-        self.session = sessionmaker(bind=self.database)()
-        Base.metadata.create_all(self.database)
-
-    def disconnect(self) -> None:
-        self.session.close()
-
-    def insert_or_update_path(self, obsid: int, old_path: str | None) -> None:
-        data = self.session.query(OldPathData).filter_by(obsid=obsid).first()
-        if data:
-            data.old_level1_path = old_path
-        else:
-            data = OldPathData(obsid=obsid, old_level1_path=old_path)
-            self.session.add(data)
-        self.session.commit()
-
-    def get_path(self, obsid: int) -> str | None:
-        data = self.session.query(OldPathData).filter_by(obsid=obsid).first()
-        return data.old_level1_path if data else None

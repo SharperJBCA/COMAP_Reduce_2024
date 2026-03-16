@@ -19,10 +19,14 @@ from modules.SQLModule.SQLModule import COMAPData
 
 class BaseCOMAPModule: 
 
+    def __init__(self):
+        self.lock_file_path = None 
+
+
     def set_lock_file_path(self,lock_file_path : str = '.lock_file_path') -> None:
         os.makedirs(lock_file_path, exist_ok=True)
         self.lock_file_path = lock_file_path    
-        
+
     def already_processed(self, file_info : COMAPData, ref_group : str, overwrite : bool = False) -> bool:
         """
         Check if the system temperature has already been processed
@@ -94,10 +98,8 @@ class RetryH5PY:
         return float(result.stdout.decode('utf-8')) 
     
     @staticmethod
-    def read_dset(dset, sl, delay=5,lock_file_directory = '/home/sharper/.COMAP_PIPELINE_LOCK_FILES'):
-        
-        if lock_file_directory is None:
-            return dset[*sl]
+    def read_dset(dset, sl, delay=5,lock_file_directory = None):# '/home/sharper/.COMAP_PIPELINE_LOCK_FILES'):
+        return dset[tuple(sl)]
 
         pid = os.getpid()
         lock_filename = f'{lock_file_directory}/{pid}.lock'
@@ -113,7 +115,7 @@ class RetryH5PY:
                 retries += 1
             else:
                 open(lock_filename, 'w').close()
-                data =  dset[*sl]
+                data =  dset[tuple(sl)]
                 os.remove(lock_filename)
                 break 
         else:
@@ -163,7 +165,7 @@ def safe_open_h5(hdf5_dset, sl, max_ops_threshold=500, retry_delay=5, max_retrie
         
         if ops_per_second is None or ops_per_second < max_ops_threshold:
             try:
-                return hdf5_dset[*sl]
+                return hdf5_dset[tuple(sl)]
             except (OSError, IOError) as e:
                 # If operation actually fails despite low load, retry
                 print(f"Error opening h5 file: {e}, retrying...")

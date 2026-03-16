@@ -178,7 +178,6 @@ class Level2Pipeline:
 
         # Get the list of files to be processed 
         if not self.target_obsid:
-            print('hello')
             level1_filelist = db.get_unprocessed_files(source_group=target_source_group, source=target_source, min_obsid=self.MIN_OBSID, overwrite=True)
         else: 
             if isinstance(self.target_obsid,str):
@@ -193,15 +192,18 @@ class Level2Pipeline:
         else:
             final_files = []
             for fileinfo in tqdm(level1_filelist, desc='Checking Level 2 Files for file list'):
-                if fileinfo.level2_path is None: # Is the level 2 path in the database?
-                    final_files.append(fileinfo)
-                else:
-                    if not os.path.exists(fileinfo.level2_path): # Does the level 2 file exist?
+                try:
+                    if fileinfo.level2_path is None: # Is the level 2 path in the database?
                         final_files.append(fileinfo)
                     else:
-                        with RetryH5PY(fileinfo.level2_path, 'r') as f:  # If the file exists, check if it has been processed
-                            if (not 'level2/binned_filtered_data' in f) or (self.parameters['modules']['ProcessLevel2']['GainFilterAndBin']['GainFilterAndBin']['GainFilterAndBin']['overwrite'] == True):
-                                final_files.append(fileinfo)
+                        if not os.path.exists(fileinfo.level2_path): # Does the level 2 file exist?
+                            final_files.append(fileinfo)
+                        else:
+                            with RetryH5PY(fileinfo.level2_path, 'r') as f:  # If the file exists, check if it has been processed
+                                if (not 'level2/binned_filtered_data' in f) or (self.parameters['modules']['ProcessLevel2']['GainFilterAndBin']['GainFilterAndBin']['GainFilterAndBin']['overwrite'] == True):
+                                    final_files.append(fileinfo)
+                except BadCOMAPFile:
+                    continue
                         
         print('TOTAL FILES', len(final_files), 'files to process')
 
@@ -220,11 +222,11 @@ class Level2Pipeline:
          
         # Add master pid to parameters 
         # Clear lock files 
-        lock_files_folder = f'/home/sharper/.COMAP_PIPELINE_LOCK_FILES/{os.getpid()}'
+        lock_files_folder = None # f'/home/sharper/.COMAP_PIPELINE_LOCK_FILES/{os.getpid()}'
         self.parameters['Master']['lock_files_folder'] = lock_files_folder
-        os.makedirs(lock_files_folder, exist_ok=True)
-        for filename in os.listdir(lock_files_folder):
-            os.remove(os.path.join(lock_files_folder, filename))
+        #os.makedirs(lock_files_folder, exist_ok=True)
+        #for filename in os.listdir(lock_files_folder):
+        #    os.remove(os.path.join(lock_files_folder, filename))
 
         # Run the pipeline in parallel
         self.execute_parallel_subprocess(chunk_filelists, self.parameters)

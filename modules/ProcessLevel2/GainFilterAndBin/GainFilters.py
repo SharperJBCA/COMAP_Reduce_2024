@@ -39,6 +39,7 @@ def solve_timepoint(args):
 class GainFilterBase:
 
     def __init__(self, end_cut = 50):
+        super().__init__()
         self.end_cut = end_cut
 
 
@@ -168,7 +169,7 @@ class GainFilterBase:
         templates    = templates.reshape(  (n_bands * n_channels, n_templates)) 
         data_reshape = data_normed.reshape((n_bands * n_channels, n_tod))
         if np.sum(bad_values) == bad_values.size:
-            return np.zeros(n_tod)
+            return np.zeros(n_tod), mask
 
         not_zeros = np.sum(templates, axis=1) != 0  
 
@@ -197,76 +198,12 @@ class GainFilterBase:
         data[bad_values,:] = 0
         return data 
     
-    def gain_subtract_fit_with_prior(self, data_normed : np.ndarray, system_temperature : np.ndarray, sigma_red : float, alpha : float, return_all : bool = False, sample_rate : float = 50.0) -> np.ndarray:
-        """
-        Gain subtraction but with the noise prior
-        """
-
-        n_bands, nfreqs, ntod = data_normed.shape
-
-        sys_templates  = np.ones((n_bands,nfreqs, 2))
-        gain_templates = np.ones((n_bands,nfreqs, 1)) 
-        v = np.linspace(-1,1,nfreqs*n_bands).reshape((n_bands,nfreqs))
-        if n_bands > 1:
-            v[0] = v[0,::-1]
-            v[2] = v[2,::-1]
-        sys_templates[..., 0] = 1./system_temperature  
-        sys_templates[..., 1] = v/system_temperature
-        for iband in range(n_bands):
-            sys_templates[iband]  = self.remove_edges(sys_templates[iband] , system_temperature[iband])
-            gain_templates[iband] = self.remove_edges(gain_templates[iband], system_temperature[iband])
-            data_normed[iband]    = self.remove_edges(data_normed[iband]   , system_temperature[iband])
-        sys_templates  = sys_templates.reshape((n_bands * nfreqs, 2))
-        gain_templates = gain_templates.reshape((n_bands * nfreqs, 1))
-        data_normed    = data_normed.reshape((n_bands * nfreqs, ntod))
-
-        cov = self.PS_1f(sigma_red, alpha, ntod, sample_rate=sample_rate)
-
-        PtP = np.linalg.pinv(np.dot(sys_templates.T, sys_templates))
-        Z = np.eye(nfreqs,nfreqs) - sys_templates.dot(PtP).dot(sys_templates.T)
-        RHS = np.fft.rfft(gain_templates.T.dot(Z).dot(data_normed)) 
-        z   = gain_templates.T.dot(Z).dot(gain_templates)[0] 
-        a_best_fit_ft = RHS/(z + 1./cov) 
-        a_best_fit    = np.fft.irfft(a_best_fit_ft, n=ntod) 
-
-        m_best_fit = np.linalg.pinv(sys_templates.T.dot(sys_templates)).dot(sys_templates.T).dot(data_normed - gain_templates.dot(a_best_fit))
-
-        return a_best_fit, m_best_fit, gain_templates, sys_templates
-
-    def gain_subtract_fit_with_prior_old(self, data_normed : np.ndarray, system_temperature : np.ndarray, sigma_red : float, alpha : float, return_all : bool = False, sample_rate : float = 50.0) -> np.ndarray:
-        """
-        Gain subtraction but with the noise prior
-        """
-
-        nfreqs, ntod = data_normed.shape
-
-        sys_templates  = np.ones((nfreqs, 2))
-        gain_templates = np.ones((nfreqs, 1)) 
-        v = np.linspace(-1,1,nfreqs).reshape((nfreqs))
-        sys_templates[..., 0] = 1./system_temperature  
-        sys_templates[..., 1] = v/system_temperature
-        sys_templates  = self.remove_edges(sys_templates , system_temperature)
-        gain_templates = self.remove_edges(gain_templates, system_temperature)
-        data_normed    = self.remove_edges(data_normed   , system_temperature)
-
-
-        cov = self.PS_1f(sigma_red, alpha, ntod, sample_rate=sample_rate)
-
-        PtP = np.linalg.pinv(np.dot(sys_templates.T, sys_templates))
-        Z = np.eye(nfreqs,nfreqs) - sys_templates.dot(PtP).dot(sys_templates.T)
-        RHS = np.fft.rfft(gain_templates.T.dot(Z).dot(data_normed)) 
-        z   = gain_templates.T.dot(Z).dot(gain_templates)[0] 
-        a_best_fit_ft = RHS/(z + 1./cov) 
-        a_best_fit    = np.fft.irfft(a_best_fit_ft, n=ntod) 
-
-        m_best_fit = np.linalg.pinv(sys_templates.T.dot(sys_templates)).dot(sys_templates.T).dot(data_normed - gain_templates.dot(a_best_fit))
-
-        return a_best_fit, m_best_fit, gain_templates, sys_templates
 
 
 class GainFilterWithPrior(GainFilterBase):
 
     def __init__(self, end_cut = 100, noise_prior_path='ancillary_data/noise_priors/noise_priors.npy'):
+        super().__init__()
         self.end_cut = end_cut
 
         self.noise_priors = np.load(noise_prior_path, allow_pickle=True).flatten()[0] 
@@ -319,3 +256,38 @@ class GainFilterWithPrior(GainFilterBase):
         # sys.exit()
         return residual, mask, gains
 
+    def gain_subtract_fit_with_prior(self, data_normed : np.ndarray, system_temperature : np.ndarray, sigma_red : float, alpha : float, return_all : bool = False, sample_rate : float = 50.0) -> np.ndarray:
+        """
+        Gain subtraction but with the noise prior
+        """
+
+        n_bands, nfreqs, ntod = data_normed.shape
+
+        sys_templates  = np.ones((n_bands,nfreqs, 2))
+        gain_templates = np.ones((n_bands,nfreqs, 1)) 
+        v = np.linspace(-1,1,nfreqs*n_bands).reshape((n_bands,nfreqs))
+        if n_bands > 1:
+            v[0] = v[0,::-1]
+            v[2] = v[2,::-1]
+        sys_templates[..., 0] = 1./system_temperature  
+        sys_templates[..., 1] = v/system_temperature
+        for iband in range(n_bands):
+            sys_templates[iband]  = self.remove_edges(sys_templates[iband] , system_temperature[iband])
+            gain_templates[iband] = self.remove_edges(gain_templates[iband], system_temperature[iband])
+            data_normed[iband]    = self.remove_edges(data_normed[iband]   , system_temperature[iband])
+        sys_templates  = sys_templates.reshape((n_bands * nfreqs, 2))
+        gain_templates = gain_templates.reshape((n_bands * nfreqs, 1))
+        data_normed    = data_normed.reshape((n_bands * nfreqs, ntod))
+
+        cov = self.PS_1f(sigma_red, alpha, ntod, sample_rate=sample_rate)
+
+        PtP = np.linalg.pinv(np.dot(sys_templates.T, sys_templates))
+        Z = np.eye(nfreqs,nfreqs) - sys_templates.dot(PtP).dot(sys_templates.T)
+        RHS = np.fft.rfft(gain_templates.T.dot(Z).dot(data_normed)) 
+        z   = gain_templates.T.dot(Z).dot(gain_templates)[0] 
+        a_best_fit_ft = RHS/(z + 1./cov) 
+        a_best_fit    = np.fft.irfft(a_best_fit_ft, n=ntod) 
+
+        m_best_fit = np.linalg.pinv(sys_templates.T.dot(sys_templates)).dot(sys_templates.T).dot(data_normed - gain_templates.dot(a_best_fit))
+
+        return a_best_fit, m_best_fit, gain_templates, sys_templates

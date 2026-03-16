@@ -1,0 +1,6 @@
+band = 0
+wcs_def = "Galactic"
+offset_length = 100
+map_name = "comap_galactic"
+file_list = "map_making_configs/file_list.txt"
+output_dir = "/scratch/nas_core2/sharper/COMAP/level2_data_2024/level2_maps/all_feeds"

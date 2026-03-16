@@ -24,6 +24,7 @@ class AtmosphereInObservation(BaseCOMAPModule):
     """
 
     def __init__(self, plot=False, plot_dir='outputs/AtmosphereInObservation', overwrite=False) -> None:
+        super().__init__()
         self.NFEEDS = 19
         self.NBANDS = 4
         self.NCHANNELS = 1024
@@ -33,7 +34,6 @@ class AtmosphereInObservation(BaseCOMAPModule):
         self.overwrite = overwrite
 
         self.target_tod_dataset = 'spectrometer/tod'
-
     def already_processed(self, file_info : COMAPData, overwrite=False) -> bool:
         """
         Check if the atmosphere has already been fit for this observation 

@@ -22,6 +22,7 @@ class GainFilterAndBin(BaseCOMAPModule):
 
     def __init__(self, end_cut=50, n_freq_bin=2, filtered_binned_data_name='binned_filtered_data', 
                  gain_filter_name='GainFilterBase', overwrite=False, gain_filter_kwargs={}) -> None:
+        super().__init__()
         # self.NCHANNELS = 1024
         self.NBANDS = 4
         self.NFEEDS = 19
@@ -186,7 +187,7 @@ class GainFilterAndBin(BaseCOMAPModule):
                                                                         feed,
                                                                         sigma_red=sigma_red,
                                                                         alpha=alpha)
-        weights[~mask] = 0.0 
+            weights[~mask] = 0.0 
         # Average the data in frequency 
         # n_bands, n_channels, n_tod = data.shape
         # ones = np.ones((n_bands, self.n_freq_bin, n_channels//self.n_freq_bin, 1))
