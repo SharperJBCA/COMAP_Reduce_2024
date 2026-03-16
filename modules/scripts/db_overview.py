@@ -54,6 +54,32 @@ def cmd_summary(show_examples: int) -> None:
 
     db._disconnect()
 
+def cmd_field_status(field_name: str, exact: bool = False) -> None:
+    """Summarize how many observations exist for a field and how many are processed."""
+    db._connect()
+
+    if exact:
+        base_query = db.session.query(COMAPData.obsid).filter(COMAPData.source == field_name)
+    else:
+        base_query = db.session.query(COMAPData.obsid).filter(COMAPData.source.ilike(f"%{field_name}%"))
+
+    total = base_query.count()
+    processed = (
+        base_query
+        .filter(COMAPData.level2_path.isnot(None), COMAPData.level2_path != "")
+        .count()
+    )
+
+    db._disconnect()
+
+    print(tabulate([
+        ["Field query", field_name],
+        ["Match mode", "exact" if exact else "contains"],
+        ["Total observations", total],
+        ["Processed observations", processed],
+        ["Unprocessed observations", total - processed],
+    ], headers=["Metric", "Value"], tablefmt="github"))
+
 
 def cmd_missing_level2(limit: int) -> None:
     db._connect()
@@ -102,6 +128,10 @@ def main() -> None:
     path_search.add_argument("substring", help="Substring to search inside level1_path and level2_path")
     path_search.add_argument("--limit", type=int, default=200, help="Max rows to print (<=0 means no limit)")
 
+    field_status = subparsers.add_parser("field-status", help="Show observation/processed counts for a field name")
+    field_status.add_argument("field_name", help="Field name to search in the source column")
+    field_status.add_argument("--exact", action="store_true", help="Match source exactly instead of substring matching")
+
     args = parser.parse_args()
 
     db.connect(args.database)
@@ -112,6 +142,8 @@ def main() -> None:
         cmd_missing_level2(args.limit)
     elif args.command == "path-search":
         cmd_path_search(args.substring, args.limit)
+    elif args.command == "field-status":
+        cmd_field_status(args.field_name, args.exact)
 
 
 if __name__ == "__main__":
