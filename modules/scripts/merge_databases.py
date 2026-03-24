@@ -65,26 +65,22 @@ def build_upsert_sql(
             continue
 
         if prefer_secondary:
-            # Keep incoming value unless it is NULL.
             expr = f"{col}=COALESCE(excluded.{col}, {table}.{col})"
         else:
-            # Keep existing value unless it is NULL.
             expr = f"{col}=COALESCE({table}.{col}, excluded.{col})"
 
         assignments.append(expr)
 
     if not assignments:
-        # No mutable columns, so no-op update is enough for ON CONFLICT clause.
         assignments = [f"{key_columns[0]}={table}.{key_columns[0]}"]
 
     update_clause = ", ".join(assignments)
 
     return (
         f"INSERT INTO {table} ({insert_cols}) "
-        f"SELECT {select_cols} FROM secondary.{table} s "
+        f"SELECT {select_cols} FROM secondary.{table} s WHERE true "
         f"ON CONFLICT ({conflict_cols}) DO UPDATE SET {update_clause}"
     )
-
 
 def merge_table(conn: sqlite3.Connection, table: str, prefer_secondary: bool) -> tuple[int, int]:
     if not table_exists(conn, "main", table):
