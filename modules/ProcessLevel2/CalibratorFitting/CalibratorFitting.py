@@ -125,18 +125,6 @@ class CalibratorFitting(BaseCOMAPModule):
         self.calibrator_fit_group_name = calibrator_fit_group_name
         self.fit_radius = fit_radius
 
-    def already_processed(self, file_info : COMAPData, overwrite : bool = False) -> bool:
-        """
-        Check if the gain filter and bin has already been applied 
-        """
-        if overwrite:
-            return False
-    
-        with RetryH5PY(file_info.level2_path, 'r') as ds: 
-            if f'level2/{self.calibrator_fit_group_name}' in ds:
-                return True
-            return False
-        
     def save_data(self, file_info : COMAPData) -> None:
         with RetryH5PY(file_info.level2_path, 'a') as ds:
             if not 'level2' in ds:
@@ -193,10 +181,22 @@ class CalibratorFitting(BaseCOMAPModule):
 
             ds = grp.create_dataset('chi2', data=self.chi2_fits)
 
-            ds = grp.create_dataset('flux', data=self.get_flux_density(self.best_fits))
+            flux = self.get_flux_density(self.best_fits)
+            flux_errors = self.get_flux_density_errors(self.best_fits, self.errs_fits)
+            ds = grp.create_dataset('flux', data=flux)
             ds.attrs['unit'] = 'Jy'
-            ds = grp.create_dataset('flux_errors', data=self.get_flux_density_errors(self.best_fits, self.errs_fits))
+            ds = grp.create_dataset('flux_errors', data=flux_errors)
             ds.attrs['unit'] = 'Jy'
+
+        # Store summary calibrator statistics in SQL for easy querying
+        db.update_observation_summary(
+            file_info.obsid,
+            calibrator_flux=float(np.nanmedian(flux)),
+            calibrator_flux_error=float(np.nanmedian(flux_errors)),
+            calibrator_chi2=float(np.nanmedian(self.chi2_fits)),
+            pointing_offset_az=float(np.nanmedian(self.delta_az[0])),
+            pointing_offset_el=float(np.nanmedian(self.delta_el[0])),
+        )
 
     def get_flux_density(self, best_fits : np.ndarray) -> np.ndarray:
         """
@@ -453,7 +453,7 @@ class CalibratorFitting(BaseCOMAPModule):
         if not file_info.source_group == 'Calibrator':
             return
 
-        if self.already_processed(file_info, self.overwrite):
+        if self.already_processed(file_info, f'level2/{self.calibrator_fit_group_name}', self.overwrite):
             return
         logging.info(f'Starting calibrator fitting for {file_info.source}')
 

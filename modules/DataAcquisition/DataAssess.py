@@ -130,8 +130,7 @@ class DataAssess:
                 try:
                     obsid_from_path = get_obsid_from_path(file_path)
                 except ValueError as e:
-                    logging.debug(f'Error getting obsid from path: {file_path}')
-                    logging.debug(e)
+                    logging.warning(f'Could not parse obsid from path: {file_path} ({e})')
                     continue
 
                 try:
@@ -147,7 +146,7 @@ class DataAssess:
                         # Only accept entries that match the obsid we parsed from the filename,
                         # if you want an extra sanity check:
                         if comap_metadata['obsid'] != obsid_from_path:
-                            logging.debug(f'obsid mismatch: attrs={comap_metadata["obsid"]} path={obsid_from_path}')
+                            logging.warning(f'obsid mismatch: attrs={comap_metadata["obsid"]} path={obsid_from_path} file={file_path}')
                         comap_metadata[file_path_key] = file_path
                         comap_metadata['source'], comap_metadata['source_group'] = COMAPData.get_source_info(comap_metadata)
                 except OSError:

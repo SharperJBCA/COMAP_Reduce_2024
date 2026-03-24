@@ -11,8 +11,7 @@ import toml
 import numpy as np
 import time 
 from modules.SQLModule.SQLModule import db 
-import importlib
-from modules.pipeline_control.Pipeline import BadCOMAPFile, update_log_variable,setup_logging
+from modules.pipeline_control.Pipeline import BadCOMAPFile, update_log_variable, setup_logging, load_module
 from modules.SQLModule.SQLModule import QualityFlag, FileFlag
 from datetime import datetime
 
@@ -25,31 +24,35 @@ def process_files(filelist: list, parameters: dict, rank: int, base_delay : floa
 
     process_pid = os.getpid()
     delay = rank * base_delay
-    time.sleep(delay) 
+    time.sleep(delay)
     for file in filelist:
-        # Loop over the Master pipeline 
+        # Loop over the Master pipeline
         update_log_variable('{:06d} Rank {:02d} PID {}'.format(file.obsid, rank, process_pid))
         logging.info(f"Processing file: {os.path.basename(file.level1_path)}")
+        db.update_observation_summary(file.obsid, processing_status='pending', processing_error=None)
+        file_failed = False
         for module_info in parameters['Master']['_pipeline']:
-            logging.info(f"Running module: {module_info['module']}")
-            package = module_info['package']
-            module = module_info['module']
-            args = module_info['args']
-            
-            # Import the module
-            logging.info(f"Importing module: {package}.{module}")
-            module = getattr(importlib.import_module(package), module)
-            module = module(**args)
-            #module.set_lock_file_path(parameters['Master']['lock_files_folder'])
-            logging.info(f"Module imported: {module.__class__.__name__}")
-            # Execute the module
+            module = load_module(module_info)
             try:
                 module.run(file)
             except BadCOMAPFile as e:
                 logging.error(f"Error processing file: {file.level1_path}")
                 logging.error(e)
                 db.update_quality_flag_all(file.obsid, FileFlag.BAD_FILE)
+                db.update_observation_summary(file.obsid,
+                                              processing_status='failed',
+                                              processing_error=str(e))
+                file_failed = True
                 break
+            except Exception as e:
+                logging.error(f"Unexpected error in {module_info['module']} for obsid {file.obsid}: {e}")
+                db.update_observation_summary(file.obsid,
+                                              processing_status='failed',
+                                              processing_error=f"{module_info['module']}: {e}")
+                file_failed = True
+                break
+        if not file_failed:
+            db.update_observation_summary(file.obsid, processing_status='complete')
     update_log_variable('None')
     print('Main loop done')
     

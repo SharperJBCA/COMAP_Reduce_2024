@@ -37,6 +37,7 @@ class COMAPData(Base):
     version: Mapped[str | None] = mapped_column(nullable=True)
 
     quality_flags: Mapped[list["QualityFlag"]] = relationship("QualityFlag", back_populates="observation")
+    summary: Mapped["ObservationSummary"] = relationship("ObservationSummary", back_populates="observation", uselist=False)
 
     @staticmethod
     def get_source_info(metadata: dict) -> tuple:
@@ -65,9 +66,37 @@ class COMAPData(Base):
     
 class OldPathData(Base):
     __tablename__ = 'old_path_data'
-    
+
     obsid: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
     old_level1_path: Mapped[str | None] = mapped_column(nullable=True)
+
+class ObservationSummary(Base):
+    """Per-observation summary statistics, queryable from SQL without opening HDF5 files."""
+    __tablename__ = 'observation_summary'
+
+    obsid: Mapped[int] = mapped_column(sa.ForeignKey('comap_data.obsid'), primary_key=True)
+
+    # Processing status
+    processing_status: Mapped[str | None] = mapped_column(nullable=True, default=None)  # pending, complete, failed
+    processing_error: Mapped[str | None] = mapped_column(nullable=True, default=None)
+
+    # System temperature (median across feeds/bands/channels)
+    median_tsys: Mapped[float | None] = mapped_column(nullable=True, default=None)
+
+    # Atmosphere
+    mean_tau: Mapped[float | None] = mapped_column(nullable=True, default=None)
+
+    # Calibrator fitting
+    calibrator_flux: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    calibrator_flux_error: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    calibrator_chi2: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    pointing_offset_az: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    pointing_offset_el: Mapped[float | None] = mapped_column(nullable=True, default=None)
+
+    # Scan info
+    n_scans: Mapped[int | None] = mapped_column(nullable=True, default=None)
+
+    observation = relationship("COMAPData", back_populates="summary")
 
 class QualityFlag(Base):
     __tablename__ = 'quality_flags'
@@ -628,6 +657,23 @@ class SQLModule:
             }
             for f in flags
         ]
+
+        summary = (self.session.query(ObservationSummary)
+                   .filter_by(obsid=obsid).first())
+        if summary:
+            snapshot['summary'] = {
+                'processing_status': summary.processing_status,
+                'processing_error': summary.processing_error,
+                'median_tsys': summary.median_tsys,
+                'mean_tau': summary.mean_tau,
+                'calibrator_flux': summary.calibrator_flux,
+                'calibrator_flux_error': summary.calibrator_flux_error,
+                'calibrator_chi2': summary.calibrator_chi2,
+                'pointing_offset_az': summary.pointing_offset_az,
+                'pointing_offset_el': summary.pointing_offset_el,
+                'n_scans': summary.n_scans,
+            }
+
         self._disconnect()
         return snapshot
 
@@ -695,6 +741,72 @@ class SQLModule:
         
         self.session.commit()
         self._disconnect()
+
+    def update_observation_summary(self, obsid: int, **kwargs) -> None:
+        """
+        Update the ObservationSummary for an observation (upsert).
+
+        Accepts any ObservationSummary column as a keyword argument, e.g.:
+            db.update_observation_summary(obsid, median_tsys=45.2, n_scans=12)
+        """
+        self._connect()
+        summary = (self.session.query(ObservationSummary)
+                   .filter_by(obsid=obsid).first())
+        if summary is None:
+            summary = ObservationSummary(obsid=obsid, **kwargs)
+            self.session.add(summary)
+        else:
+            for key, value in kwargs.items():
+                if hasattr(summary, key):
+                    setattr(summary, key, value)
+        self.session.commit()
+        self._disconnect()
+
+    def query_observation_summaries(self, min_obsid=0, max_obsid=1000000,
+                                     source=None, source_group=None,
+                                     processing_status=None) -> list[dict]:
+        """
+        Query ObservationSummary joined with COMAPData for filtering.
+
+        Returns list of dicts with observation metadata + summary statistics.
+        """
+        self._connect()
+        query = (self.session.query(COMAPData, ObservationSummary)
+                 .outerjoin(ObservationSummary, COMAPData.obsid == ObservationSummary.obsid)
+                 .filter(COMAPData.obsid >= min_obsid)
+                 .filter(COMAPData.obsid <= max_obsid))
+        if source:
+            query = query.filter(COMAPData.source.contains(source))
+        if source_group:
+            query = query.filter(COMAPData.source_group == source_group)
+        if processing_status:
+            query = query.filter(ObservationSummary.processing_status == processing_status)
+
+        results = []
+        for obs, summary in query.all():
+            row = {
+                'obsid': obs.obsid,
+                'source': obs.source,
+                'source_group': obs.source_group,
+                'level2_path': obs.level2_path,
+                'utc_start': obs.utc_start,
+            }
+            if summary:
+                row.update({
+                    'processing_status': summary.processing_status,
+                    'processing_error': summary.processing_error,
+                    'median_tsys': summary.median_tsys,
+                    'mean_tau': summary.mean_tau,
+                    'calibrator_flux': summary.calibrator_flux,
+                    'calibrator_flux_error': summary.calibrator_flux_error,
+                    'calibrator_chi2': summary.calibrator_chi2,
+                    'pointing_offset_az': summary.pointing_offset_az,
+                    'pointing_offset_el': summary.pointing_offset_el,
+                    'n_scans': summary.n_scans,
+                })
+            results.append(row)
+        self._disconnect()
+        return results
 
     def update_quality_statistics_bulk(self, obsid: int, stats_list: list[dict]) -> None:
         """

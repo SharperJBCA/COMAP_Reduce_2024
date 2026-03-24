@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 import sys 
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
-from SQLModule.SQLModule import SQLModule, COMAPData, create_feed_table
+from SQLModule.SQLModule import SQLModule, COMAPData, ObservationSummary
 
 @pytest.fixture
 def sql_db():
@@ -13,10 +13,6 @@ def sql_db():
     yield db
     db.disconnect()
     os.remove("test.db")
-
-@pytest.fixture
-def sample_feed_data():
-    return {'obsid':1, 'feed_number':1, 'bad_data':False}
 
 @pytest.fixture
 def sample_data():
@@ -130,14 +126,95 @@ def test_query_missing_obsid(sql_db, sample_data):
     # Check for missing obsids
     assert not all([obsid in result for obsid in obsids])
 
-def test_create_feed_table(sql_db, sample_feed_data):
-    feed = 1 
-    band = 0 
-    comap_feed_class = create_feed_table(feed, band)
+def test_update_observation_summary_insert(sql_db, sample_data):
+    """Test creating a new ObservationSummary row."""
+    sql_db.insert_or_update_data(sample_data)
+    sql_db.update_observation_summary(1, median_tsys=45.2, n_scans=12)
 
-    # Insert data
-    sql_db.session.add(comap_feed_class(**sample_feed_data))
-    
+    sql_db._connect()
+    summary = sql_db.session.query(ObservationSummary).filter_by(obsid=1).first()
+    assert summary is not None
+    assert summary.median_tsys == pytest.approx(45.2)
+    assert summary.n_scans == 12
+    assert summary.processing_status is None
+    sql_db._disconnect()
+
+def test_update_observation_summary_upsert(sql_db, sample_data):
+    """Test updating an existing ObservationSummary row."""
+    sql_db.insert_or_update_data(sample_data)
+    sql_db.update_observation_summary(1, median_tsys=45.2, processing_status='pending')
+    sql_db.update_observation_summary(1, processing_status='complete', n_scans=8)
+
+    sql_db._connect()
+    summary = sql_db.session.query(ObservationSummary).filter_by(obsid=1).first()
+    assert summary.median_tsys == pytest.approx(45.2)  # preserved from first call
+    assert summary.processing_status == 'complete'
+    assert summary.n_scans == 8
+    sql_db._disconnect()
+
+def test_update_observation_summary_processing_failure(sql_db, sample_data):
+    """Test recording a processing failure."""
+    sql_db.insert_or_update_data(sample_data)
+    sql_db.update_observation_summary(1,
+                                       processing_status='failed',
+                                       processing_error='SystemTemperature: No vane events')
+
+    sql_db._connect()
+    summary = sql_db.session.query(ObservationSummary).filter_by(obsid=1).first()
+    assert summary.processing_status == 'failed'
+    assert 'No vane events' in summary.processing_error
+    sql_db._disconnect()
+
+def test_update_observation_summary_calibrator_stats(sql_db, sample_data):
+    """Test storing calibrator fit statistics."""
+    sql_db.insert_or_update_data(sample_data)
+    sql_db.update_observation_summary(1,
+                                       calibrator_flux=125.3,
+                                       calibrator_flux_error=2.1,
+                                       calibrator_chi2=1.5,
+                                       pointing_offset_az=0.003,
+                                       pointing_offset_el=-0.001)
+
+    sql_db._connect()
+    summary = sql_db.session.query(ObservationSummary).filter_by(obsid=1).first()
+    assert summary.calibrator_flux == pytest.approx(125.3)
+    assert summary.calibrator_chi2 == pytest.approx(1.5)
+    assert summary.pointing_offset_az == pytest.approx(0.003)
+    sql_db._disconnect()
+
+def test_query_observation_summaries(sql_db, sample_data):
+    """Test querying observation summaries with filters."""
+    sample_data['source_group'] = 'Calibrator'
+    sql_db.insert_or_update_data(sample_data)
+    sql_db.update_observation_summary(1, median_tsys=45.0, processing_status='complete')
+
+    results = sql_db.query_observation_summaries(processing_status='complete')
+    assert len(results) == 1
+    assert results[0]['obsid'] == 1
+    assert results[0]['median_tsys'] == pytest.approx(45.0)
+    assert results[0]['processing_status'] == 'complete'
+
+def test_query_observation_summaries_no_summary(sql_db, sample_data):
+    """Test querying when observation has no summary row yet."""
+    sql_db.insert_or_update_data(sample_data)
+
+    results = sql_db.query_observation_summaries()
+    assert len(results) == 1
+    assert results[0]['obsid'] == 1
+    assert 'median_tsys' not in results[0]  # no summary data
+
+def test_observation_snapshot_includes_summary(sql_db, sample_data):
+    """Test that get_observation_snapshot includes summary data."""
+    sql_db.insert_or_update_data(sample_data)
+    sql_db.update_observation_summary(1, median_tsys=50.0, n_scans=10,
+                                       processing_status='complete')
+
+    snapshot = sql_db.get_observation_snapshot(1)
+    assert 'summary' in snapshot
+    assert snapshot['summary']['median_tsys'] == pytest.approx(50.0)
+    assert snapshot['summary']['n_scans'] == 10
+    assert snapshot['summary']['processing_status'] == 'complete'
+
 def test_get_source_info():
     metadata = [{'source':'TauA,', 'comment':'test comment'},
                 {'source':'GField10,CasA', 'comment':'test comment'},

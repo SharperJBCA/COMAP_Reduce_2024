@@ -193,8 +193,47 @@ For Level-2 steps, prefer inheriting from `BaseCOMAPModule` and using `RetryH5PY
 
 ---
 
+## I/O Benchmarking
+
+Before tuning `nprocess` for Level-2 processing, measure how your storage scales with concurrent HDF5 readers using the benchmark script:
+
+```bash
+# Using the pipeline database to find files automatically
+python modules/scripts/benchmark_hdf5_io.py \
+    --database databases/COMAP_manchester.db \
+    --concurrency 1,2,4,8,16 \
+    --num-files 20 \
+    --level 1 \
+    --output benchmark_level1.png
+
+# Or point at a directory of HDF5 files directly
+python modules/scripts/benchmark_hdf5_io.py \
+    --directory /scratch/nas_comap1/level1/ \
+    --concurrency 1,2,4,8 \
+    --num-files 30 \
+    --output benchmark_nas1.png
+
+# Quick latency test (reads a single slice per file instead of the full dataset)
+python modules/scripts/benchmark_hdf5_io.py \
+    --directory /path/to/files \
+    --concurrency 1,2,4,8 \
+    --num-files 10 \
+    --slice-only \
+    --output benchmark_latency.png
+```
+
+The script produces a two-panel plot:
+- **Left panel**: total read throughput (MB/s) vs number of concurrent readers
+- **Right panel**: per-file read latency distribution (box plot) at each concurrency level
+
+Use `--repeats N` for more stable measurements. The warm-up round (skippable with `--skip-warmup`) pre-populates NFS caches so subsequent measurements reflect steady-state performance.
+
+If throughput plateaus or degrades beyond a certain concurrency level, set `nprocess` in your processing TOML to that value or below.
+
+---
+
 ## Notes and operational guidance
 
 - Use SQL as the source of truth for observation indexing and file discovery.
 - Treat Level-2 HDF5 as the portable science product; the SQL snapshot module helps portability/reproducibility.
-- If you run multiprocessing Level-2 jobs on shared storage, monitor I/O pressure first before deep compute optimization.
+- If you run multiprocessing Level-2 jobs on shared storage, run the I/O benchmark first to find the optimal concurrency level before tuning compute parallelism.

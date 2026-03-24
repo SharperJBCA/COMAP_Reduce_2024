@@ -36,18 +36,6 @@ class GainFilterAndBin(BaseCOMAPModule):
                           'GainFilterWithPrior': GainFilterWithPrior}
         self.gain_filter = filter_classes.get(gain_filter_name, GainFilterBase)(**gain_filter_kwargs)
 
-    def already_processed(self, file_info : COMAPData, overwrite : bool = False) -> bool:
-        """
-        Check if the gain filter and bin has already been applied 
-        """
-        if overwrite:
-            return False
-    
-        with RetryH5PY(file_info.level2_path, 'r') as ds: 
-            if f'level2/{self.filtered_binned_data_name}' in ds:
-                return True
-            return False
-
     def bin_frequencies(self, data, freqs, weights, n_freq_bin, mask=None):
         """
         Perform weighted averaging of frequencies within each band, accounting for masks
@@ -223,7 +211,7 @@ class GainFilterAndBin(BaseCOMAPModule):
                     if feed in skip_feeds:
                         continue
                     # First, read in the data we need
-                    data = RetryH5PY.read_dset(ds['spectrometer/tod'], [slice(ifeed, ifeed+1), slice(None), slice(None), slice(None)],lock_file_directory=self.lock_file_path)[0,...]
+                    data = RetryH5PY.read_dset(ds['spectrometer/tod'], [slice(ifeed, ifeed+1), slice(None), slice(None), slice(None)])[0,...]
                     system_temperature = lvl2['level2/vane/system_temperature'][0,ifeed,...] 
                     gain = lvl2['level2/vane/gain'][0,ifeed,...]
                     atmos_offsets = lvl2['level2/atmosphere/offsets'][ifeed,...]
@@ -281,9 +269,9 @@ class GainFilterAndBin(BaseCOMAPModule):
     def run(self, file_info : COMAPData) -> None:
         """ """
 
-        if self.already_processed(file_info, self.overwrite):
+        if self.already_processed(file_info, f'level2/{self.filtered_binned_data_name}', self.overwrite):
             return
-        
+
         binned_data, binned_filtered_data, central_freqs, bandwidths = self.gain_filter_and_bin(file_info)
         self.save_data(file_info, binned_data, binned_filtered_data, central_freqs, bandwidths) 
 

@@ -57,8 +57,6 @@ class SystemTemperature(BaseCOMAPModule):
 
         self.overwrite = overwrite
 
-        self.lock_file_path = None
-
     def already_processed(self, file_info: COMAPData, overwrite: bool = False) -> bool:
         if overwrite or not os.path.exists(file_info.level2_path or ""):
             return False
@@ -239,7 +237,7 @@ class SystemTemperature(BaseCOMAPModule):
             vane_angles.append(spec_angle[idx_start:idx_stop])
             min_vane = np.nanmin(spec_angle[idx_start:idx_stop])
 
-            tod = RetryH5PY.read_dset(spec_tod, [slice(None), slice(None), slice(None),slice(idx_start,idx_stop)],lock_file_directory=self.lock_file_path)
+            tod = RetryH5PY.read_dset(spec_tod, [slice(None), slice(None), slice(None),slice(idx_start,idx_stop)])
             vane_hot_idx = np.where((vane_angles[-1] < (min_vane + 4)))[0]
             vane_hots.append(np.nanmean(tod[...,vane_hot_idx], axis=-1))
             vane_cold_idx = np.where((vane_angles[-1] > self.VANE_ANGLE_LOW_CUTOFF))[0]
@@ -267,7 +265,7 @@ class SystemTemperature(BaseCOMAPModule):
     def save_system_temperature(self, file_info : COMAPData, tsys : np.ndarray, gain : np.ndarray) -> None:
         """ Save the system temperature and gain to the level2 file """
 
-        with RetryH5PY(file_info.level2_path, 'a') as ds: 
+        with RetryH5PY(file_info.level2_path, 'a') as ds:
             if not 'level2/vane' in ds:
                 ds.create_group('level2/vane')
             grp = ds['level2/vane']
@@ -278,6 +276,10 @@ class SystemTemperature(BaseCOMAPModule):
             if 'gain' in grp:
                 del grp['gain']
             grp.create_dataset('gain', data=gain)
+
+        # Store median Tsys in SQL for easy querying
+        median_tsys = float(np.nanmedian(tsys))
+        db.update_observation_summary(file_info.obsid, median_tsys=median_tsys)
 
     def plot_tsys_measurements(self, file_info : COMAPData, tsys : np.ndarray, gain : np.ndarray) -> None:
         """ Plot the system temperature measurements """

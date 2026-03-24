@@ -60,6 +60,9 @@ class CreateMap:
         split_groups: Dict[str, Sequence[str]] = None,
         config_dir: str = "modules/MapMaking/map_making_configs",
         apply_pointing_correction: bool = False,
+        line_mode: bool = False,
+        line_frequency: float = 31.22332,
+        line_segment_width: int = 30,
         **kwargs,
     ) -> None:
         logging.info("Initializing CreateMap")
@@ -82,6 +85,7 @@ class CreateMap:
         self.sun_elevation_threshold = sun_elevation_threshold
         self.split_groups = split_groups or {}
 
+        self.line_mode = line_mode
         self.feeds = list(feeds)
         self.mapmaking_dir = Path(__file__).parent.parent.absolute()
         self.working_dir = os.getcwd()
@@ -106,9 +110,12 @@ class CreateMap:
             "calib_path": calib_path,
             "jackknife_odd_even": jackknife_odd_even,
             "split_mode": split_mode,
-            "apply_pointing_correction":apply_pointing_correction,
+            "apply_pointing_correction": apply_pointing_correction,
             "created_utc": datetime.now(timezone.utc).isoformat(),
         }
+        if self.line_mode:
+            self.base_parameters["line_frequency"] = line_frequency
+            self.base_parameters["line_segment_width"] = line_segment_width
 
     def _job_token(self, label: str, file_list: Sequence[str], feeds: Sequence[int]) -> str:
         """Create deterministic token to keep map-making configs unique."""
@@ -135,19 +142,23 @@ class CreateMap:
             toml.dump(parameters, f)
         with open(file_list_path, "w") as f:
             for file in job.files:
-                f.write(file + "\n")
+                if isinstance(file, (list, tuple)):
+                    f.write(",".join(file) + "\n")
+                else:
+                    f.write(file + "\n")
 
         logging.info("MapMaking config written: %s", config_file)
         logging.info("MapMaking file list written: %s", file_list_path)
         return config_file
 
     def _run_mapmaking_job(self, config_file: Path, n_files: int, label: str) -> None:
+        runner_script = "run_line_map_making.py" if self.line_mode else "run_map_making.py"
         command = [
             "mpirun",
             "-n",
             str(self.n_processes),
             "python",
-            f"{self.mapmaking_dir}/run_map_making.py",
+            f"{self.mapmaking_dir}/{runner_script}",
             str(config_file),
         ]
         file_list_str = f"CREATEMAP: MAPPING {n_files} files for {self.source} band {self.band} ({label})"

@@ -9,7 +9,7 @@ import numpy as np
 from scipy.linalg import solve 
 from tqdm import tqdm
 from itertools import product
-from modules.SQLModule.SQLModule import COMAPData
+from modules.SQLModule.SQLModule import COMAPData, db
 from modules.utils.data_handling import read_2bit
 import h5py 
 from matplotlib import pyplot 
@@ -34,19 +34,6 @@ class AtmosphereInObservation(BaseCOMAPModule):
         self.overwrite = overwrite
 
         self.target_tod_dataset = 'spectrometer/tod'
-    def already_processed(self, file_info : COMAPData, overwrite=False) -> bool:
-        """
-        Check if the atmosphere has already been fit for this observation 
-        """
-
-        if overwrite:
-            return False
-            
-        with RetryH5PY(file_info.level2_path, 'r') as lvl2: 
-            if 'level2/atmosphere' in lvl2:
-                return True
-            return False
-
     def fit_atmosphere(self, file_info : COMAPData) -> tuple:
         """
         Fit the atmosphere for a single observation 
@@ -69,10 +56,8 @@ class AtmosphereInObservation(BaseCOMAPModule):
                         continue 
 
                     
-                    feed_data = RetryH5PY.read_dset(ds['spectrometer/tod'], [slice(ifeed, ifeed+1), slice(None), slice(None),slice(None)],lock_file_directory=self.lock_file_path)[0,...]
-                    #feed_data = ds[self.target_tod_dataset][ifeed, ...]
-                    #elevation = ds['spectrometer/pixel_pointing/pixel_el'][ifeed,...]
-                    elevation = RetryH5PY.read_dset(ds['spectrometer/pixel_pointing/pixel_el'], [slice(ifeed, ifeed+1), slice(None)], delay=1,lock_file_directory=self.lock_file_path).flatten()
+                    feed_data = RetryH5PY.read_dset(ds['spectrometer/tod'], [slice(ifeed, ifeed+1), slice(None), slice(None),slice(None)])[0,...]
+                    elevation = RetryH5PY.read_dset(ds['spectrometer/pixel_pointing/pixel_el'], [slice(ifeed, ifeed+1), slice(None)]).flatten()
 
                     gain = gains[ifeed]#lvl2['level2/vane/gain'][0,ifeed,...]
 
@@ -180,7 +165,7 @@ class AtmosphereInObservation(BaseCOMAPModule):
     def save_atmosphere(self, file_info : COMAPData, atmos_offsets : np.ndarray, atmos_tau : np.ndarray) -> None:
         """ Save atmosphere measurements to level 2 file """
 
-        with RetryH5PY(file_info.level2_path, 'a') as lvl2: 
+        with RetryH5PY(file_info.level2_path, 'a') as lvl2:
             if not 'level2' in lvl2:
                 lvl2.create_group('level2')
             grp = lvl2['level2']
@@ -195,6 +180,10 @@ class AtmosphereInObservation(BaseCOMAPModule):
                 del grp2['tau']
             ds = grp2.create_dataset('tau', data=atmos_tau)
 
+        # Store mean tau in SQL for easy querying
+        mean_tau = float(np.nanmean(atmos_tau))
+        db.update_observation_summary(file_info.obsid, mean_tau=mean_tau)
+
             
     def get_nchannels(self, file_info : COMAPData) -> int:
         """
@@ -208,7 +197,7 @@ class AtmosphereInObservation(BaseCOMAPModule):
         Fit the atmosphere for a single observation 
         """
 
-        if self.already_processed(file_info, self.overwrite):
+        if self.already_processed(file_info, 'level2/atmosphere', self.overwrite):
             return
 
         logging.info(f'LEVEL1  {file_info.level1_path}')
@@ -364,7 +353,7 @@ class AtmosphereFromVane:
     def save_atmosphere(self, file_info : COMAPData, atmos_offsets : np.ndarray, atmos_tau : np.ndarray) -> None:
         """ Save atmosphere measurements to level 2 file """
 
-        with RetryH5PY(file_info.level2_path, 'a') as lvl2: 
+        with RetryH5PY(file_info.level2_path, 'a') as lvl2:
             if not 'level2' in lvl2:
                 lvl2.create_group('level2')
             grp = lvl2['level2']
@@ -378,6 +367,10 @@ class AtmosphereFromVane:
             if 'tau' in grp2:
                 del grp2['tau']
             ds = grp2.create_dataset('tau', data=atmos_tau)
+
+        # Store mean tau in SQL for easy querying
+        mean_tau = float(np.nanmean(atmos_tau))
+        db.update_observation_summary(file_info.obsid, mean_tau=mean_tau)
 
     def get_nchannels(self, file_info : COMAPData) -> int:
         """

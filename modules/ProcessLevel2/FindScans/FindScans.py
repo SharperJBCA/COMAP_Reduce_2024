@@ -8,7 +8,7 @@ import numpy as np
 import h5py 
 from scipy.interpolate import interp1d
 import sys 
-from modules.SQLModule.SQLModule import COMAPData 
+from modules.SQLModule.SQLModule import COMAPData, db
 from modules.ProcessLevel2.SystemTemperature.SystemTemperature import SystemTemperature
 from modules.utils.data_handling import read_2bit 
 
@@ -22,18 +22,6 @@ class FindScans(BaseCOMAPModule):
         self.plot_dir = plot_dir
         self.scan_status_code = scan_status_code
         self.overwrite = overwrite
-
-    def already_processed(self, file_info : COMAPData, overwrite : bool = False) -> bool:
-        """
-        Check if the scan edges have already been found 
-        """
-        if overwrite:
-            return False
-
-        with RetryH5PY(file_info.level2_path,'r') as ds: 
-            if 'level2/scan_edges' in ds:
-                return True
-            return False
 
     def find_scans(self, file_info : COMAPData) -> None:
         """
@@ -103,10 +91,10 @@ class FindScans(BaseCOMAPModule):
     
     def save_scans(self, file_info : COMAPData, scan_edges : np.ndarray) -> None:
         """
-        Save the scan edges to the database 
+        Save the scan edges to the database
         """
 
-        with RetryH5PY(file_info.level2_path,'a') as ds: 
+        with RetryH5PY(file_info.level2_path,'a') as ds:
             if not 'level2' in ds:
                 ds.create_group('level2')
             grp = ds['level2']
@@ -114,13 +102,16 @@ class FindScans(BaseCOMAPModule):
                 del grp['scan_edges']
             grp.create_dataset('scan_edges',data=scan_edges)
 
+        # Store scan count in SQL for easy querying
+        db.update_observation_summary(file_info.obsid, n_scans=int(scan_edges.shape[0]))
+
     def run(self, file_info: COMAPData) -> None:
         """
         Find the scan edges between each repointing of the telescope
         """
 
-        if self.already_processed(file_info, self.overwrite):
+        if self.already_processed(file_info, 'level2/scan_edges', self.overwrite):
             return
 
-        scan_edges = self.find_scans(file_info) 
+        scan_edges = self.find_scans(file_info)
         self.save_scans(file_info, scan_edges)

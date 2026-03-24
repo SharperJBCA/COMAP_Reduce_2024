@@ -31,14 +31,6 @@ class NoiseStatsLevel1(BaseCOMAPModule):
         self.target_tod_dataset = 'spectrometer/tod'
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def already_processed(self, file_info : COMAPData) -> bool:
-        """
-        Check if the noise statistics have already been calculated for this file 
-        """
-        with RetryH5PY(file_info.level2_path, 'r') as f:
-            if 'level1_noise_stats' in f:
-                return True
-            
     def get_nchannels(self, file_info : COMAPData) -> int:
         """
         Get the number of channels in the data 
@@ -49,8 +41,8 @@ class NoiseStatsLevel1(BaseCOMAPModule):
     def run(self, file_info : COMAPData) -> None:
         """ """
 
-        if self.already_processed(file_info):
-            return 
+        if self.already_processed(file_info, 'level1_noise_stats'):
+            return
         
 
 
@@ -215,17 +207,6 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
         self.overwrite = overwrite
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def already_processed(self, file_info : COMAPData) -> bool:
-        """
-        Check if the noise statistics have already been calculated for this file 
-        """
-        with RetryH5PY(file_info.level2_path, 'r') as f:
-            if self.overwrite:
-                return False
-            if self.output_group_name in f:
-                return True
-            return False
-
     def get_nchannels(self, file_info : COMAPData) -> int:
         """
         Get the number of channels in the data 
@@ -245,9 +226,9 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
     def run(self, file_info : COMAPData) -> None:
         """ """
 
-        if self.already_processed(file_info) and not self.overwrite:
+        if self.already_processed(file_info, self.output_group_name, self.overwrite):
             return
-        
+
         # Check if the file is processed
         self.good_file(file_info)
         

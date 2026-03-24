@@ -30,13 +30,19 @@ def get_file_list(target_source_group=None, target_source=None, min_obs_id=7000,
             return_dict=False,
         )
 
+    n_no_level2 = sum(1 for _, f in query_source_group_list.items() if f.level2_path is None)
     source_file_list = [f.level2_path for _, f in query_source_group_list.items() if f.level2_path is not None]
     source_obsids = [f.obsid for _, f in query_source_group_list.items() if f.level2_path is not None]
 
     final_files = []
+    excluded_bad_flags = 0
+    excluded_missing_datasets = 0
+    excluded_open_error = 0
     for filename, obsid in zip(tqdm(source_file_list, desc="Checking final file list"), source_obsids):
         quality_flags = db.get_quality_flags(obsid)
         if all([not v.is_good for _, v in quality_flags.items()]):
+            logging.warning("Excluding obsid %d: all quality flags are bad", obsid)
+            excluded_bad_flags += 1
             continue
         try:
             with h5py.File(filename, "r") as h5:
@@ -45,9 +51,22 @@ def get_file_list(target_source_group=None, target_source=None, min_obs_id=7000,
                     and "level2_noise_stats/binned_filtered_data/auto_rms" in h5
                 ):
                     final_files.append(filename)
+                else:
+                    logging.warning("Excluding obsid %d: missing required datasets in %s", obsid, filename)
+                    excluded_missing_datasets += 1
         except OSError:
-            logging.info("Could not open file: %s", filename)
+            logging.warning("Excluding obsid %d: could not open file %s", obsid, filename)
+            excluded_open_error += 1
             continue
+
+    # Summary report
+    n_total = len(query_source_group_list)
+    n_used = len(final_files)
+    n_excluded = n_total - n_used
+    logging.info("Map-making file selection: %d total observations, %d used, %d excluded "
+                 "(%d no Level-2 path, %d all flags bad, %d missing datasets, %d file open errors)",
+                 n_total, n_used, n_excluded, n_no_level2, excluded_bad_flags,
+                 excluded_missing_datasets, excluded_open_error)
     return final_files
 
 
@@ -124,22 +143,38 @@ def get_line_file_list(target_source_group=None, target_source=None, min_obs_id=
             return_dict=False,
         )
 
-    print("Number of files:", len(query_source_group_list))
+    n_total = len(query_source_group_list)
+    n_no_level2 = sum(1 for _, f in query_source_group_list.items() if f.level2_path is None)
     source_file_list = [
-        [f.level1_path, f.level2_path] for _, f in query_source_group_list.items() if f.level2_path is not None
+        (f.obsid, f.level1_path, f.level2_path) for _, f in query_source_group_list.items() if f.level2_path is not None
     ]
 
     # Check that level2/binned_filtered_data in each file
     final_files = []
-    for (level1_file, level2_file) in source_file_list:
-        with h5py.File(level2_file, "r") as h5:
-            if (
-                "level2/binned_filtered_data" in h5
-                and "level2_noise_stats/binned_filtered_data/auto_rms" in h5
-                and "level2/vane/gain" in h5
-            ):
-                final_files.append([level1_file, level2_file])
+    excluded_missing_datasets = 0
+    excluded_open_error = 0
+    for (obsid, level1_file, level2_file) in source_file_list:
+        try:
+            with h5py.File(level2_file, "r") as h5:
+                if (
+                    "level2/binned_filtered_data" in h5
+                    and "level2_noise_stats/binned_filtered_data/auto_rms" in h5
+                    and "level2/vane/gain" in h5
+                ):
+                    final_files.append([level1_file, level2_file])
+                else:
+                    logging.warning("Excluding obsid %d: missing required datasets in %s", obsid, level2_file)
+                    excluded_missing_datasets += 1
+        except OSError:
+            logging.warning("Excluding obsid %d: could not open file %s", obsid, level2_file)
+            excluded_open_error += 1
+            continue
 
+    n_used = len(final_files)
+    logging.info("Line map-making file selection: %d total observations, %d used, %d excluded "
+                 "(%d no Level-2 path, %d missing datasets, %d file open errors)",
+                 n_total, n_used, n_total - n_used, n_no_level2,
+                 excluded_missing_datasets, excluded_open_error)
     return final_files
 
 
