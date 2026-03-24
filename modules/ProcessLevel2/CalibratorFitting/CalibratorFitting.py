@@ -34,20 +34,22 @@ try:
     from modules.pipeline_control.Pipeline import BadCOMAPFile, RetryH5PY,BaseCOMAPModule
     try:
         from modules.utils.Coordinates import comap_longitude, comap_latitude, h2e_full, CalibratorList, pa
-    except:
+    except ImportError:
         from modules.utils.Coordinates_py import comap_longitude, comap_latitude, h2e_full, CalibratorList, pa
 
 except ModuleNotFoundError:
     from pathlib import Path
     import sys
-    sys.path.append(str(Path(__file__).parent.parent.parent.parent))    
+    sys.path.append(str(Path(__file__).parent.parent.parent.parent))
     from modules.utils.data_handling import read_2bit
     from modules.SQLModule.SQLModule import COMAPData,db
     from modules.pipeline_control.Pipeline import BadCOMAPFile, RetryH5PY,BaseCOMAPModule
     try:
         from modules.utils.Coordinates import comap_longitude, comap_latitude, h2e_full, CalibratorList, pa
-    except:
+    except ImportError:
         from modules.utils.Coordinates_py import comap_longitude, comap_latitude, h2e_full, CalibratorList, pa
+
+from modules.utils.constants import GROUND_FEED
 
 
 
@@ -289,7 +291,7 @@ class CalibratorFitting(BaseCOMAPModule):
             self.delta_el = np.zeros((2,n_feeds,n_bands,n_channels))
             self.chi2_fits = np.zeros((n_feeds,n_bands,n_channels)) + np.inf
             for ifeed, feed in enumerate(feeds):
-                if feed == 20:
+                if feed == GROUND_FEED:
                     continue
 
                 az = f['spectrometer/pixel_pointing/pixel_az'][ifeed,scan_start:scan_end]

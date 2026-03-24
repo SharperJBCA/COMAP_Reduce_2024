@@ -17,15 +17,16 @@ import os
 from modules.SQLModule.SQLModule import COMAPData, db
 from modules.utils.data_handling import read_2bit
 from modules.pipeline_control.Pipeline import RetryH5PY,BaseCOMAPModule, BadCOMAPFile
+from modules.utils.constants import NFEEDS, NBANDS, NCHANNELS, GROUND_FEED
 from modules.utils.median_filter import medfilt
 
 class NoiseStatsLevel1(BaseCOMAPModule):
 
     def __init__(self, plot=False, output_dir='outputs/NoiseStats') -> None:
         super().__init__()
-        self.NCHANNELS = 1024
-        self.NBANDS = 4
-        self.NFEEDS = 19
+        self.NCHANNELS = NCHANNELS
+        self.NBANDS = NBANDS
+        self.NFEEDS = NFEEDS
         self.plot = plot
         self.output_dir = output_dir
         self.target_tod_dataset = 'spectrometer/tod'
@@ -67,7 +68,7 @@ class NoiseStatsLevel1(BaseCOMAPModule):
         fig = pyplot.figure(figsize=(36,36))
         axes = fig.subplots(2,2, sharex=True)
         for (ifeed, feed) in enumerate(feeds):
-            if feed == 20:  
+            if feed == GROUND_FEED:  
                 continue
             axes[0,0].plot(frequency[sort_freq], statistics['sigma_white'][feed-1, :, :].flatten()[sort_freq], label=f'Feed {feed:02d}')
             axes[0,1].plot(frequency[sort_freq], statistics['sigma_red'][feed-1, :, :].flatten()[sort_freq], label=f'Feed {feed:02d}')
@@ -154,7 +155,7 @@ class NoiseStatsLevel1(BaseCOMAPModule):
             end_index    = data_indices[-1]
 
             for (ifeed, feed) in enumerate(feeds):
-                if feed == 20:
+                if feed == GROUND_FEED:
                     continue 
 
                 #feed_data = f[self.target_tod_dataset][ifeed, ...]
@@ -198,8 +199,8 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
                  overwrite=False) -> None:
         super().__init__()
         self.n_channels = n_channels
-        self.NFEEDS = 19
-        self.NBANDS = 4 
+        self.NFEEDS = NFEEDS
+        self.NBANDS = NBANDS
         self.output_group_name = output_group_name  
         self.target_tod_datasets = target_tod_datasets
         self.plot = plot
@@ -253,7 +254,7 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
         fig = pyplot.figure(figsize=(36,36))
         axes = fig.subplots(2,2, sharex=True)
         for (ifeed, feed) in enumerate(feeds):
-            if feed == 20:  
+            if feed == GROUND_FEED:  
                 continue
             if feed > 10:
                 ls = '--'
@@ -398,7 +399,7 @@ class NoiseStatsLevel2(NoiseStatsLevel1):
                             'auto_rms':    np.zeros((self.NFEEDS, self.NBANDS, self.n_channels, n_scans))}
 
                 for (ifeed, feed) in enumerate(feeds):
-                    if feed == 20:
+                    if feed == GROUND_FEED:
                         continue 
 
                     feed_data = f[target_tod_dataset][feed-1, ...]
