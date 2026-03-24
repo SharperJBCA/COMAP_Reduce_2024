@@ -60,7 +60,7 @@ class CreateLevel2File(BaseCOMAPModule):
                             if obj.shape[0] > 0:
                                 _ = obj[0]
                         except Exception as e:
-                            print(f"Error accessing dataset {name}: {str(e)}")
+                            logging.warning(f"Error accessing dataset {name}: {str(e)}")
                             nonlocal corrupted
                             corrupted = True
                             return True  # Stop visiting
@@ -71,20 +71,20 @@ class CreateLevel2File(BaseCOMAPModule):
 
                 
         except Exception as e:
-            print(f"Error checking HDF5 file {file_info.level2_path}: {str(e)}")
+            logging.warning(f"Error checking HDF5 file {file_info.level2_path}: {str(e)}")
             corrupted = True
 
         if not all([f in datasets for f in ['spectrometer','spectrometer/pixel_pointing/pixel_el']]):
             corrupted = True
-            print(f"Dataset not found in {file_info.level1_path}")
-            print(f"Dataset not found in {file_info.level2_path}: spectrometer/pixel_pointing/pixel_el")
+            logging.warning(f"Dataset not found in {file_info.level1_path}")
+            logging.warning(f"Dataset not found in {file_info.level2_path}: spectrometer/pixel_pointing/pixel_el")
 
         if corrupted and delete_if_corrupted:
             try:
                 os.remove(file_info.level2_path)
-                print(f"Deleted corrupted file: {file_info.level2_path}")
+                logging.info(f"Deleted corrupted file: {file_info.level2_path}")
             except OSError as e:
-                print(f"Failed to delete corrupted file {file_info.level2_path}: {str(e)}")
+                logging.error(f"Failed to delete corrupted file {file_info.level2_path}: {str(e)}")
                 
         return corrupted
 

@@ -191,10 +191,29 @@ calib_path = '/scratch/nas_cbassarc/sharper/work/COMAP/COMAP_Reduce_2024/noteboo
 lambda_ridge = 1e-2
 planck_30_path = '/scratch/nas_cbassarc/sharper/work/CBASS_PolarisedTF/ancillary_data/planck_pr3/LFI_SkyMap_030-BPassCorrected_1024_R3.00_full.fits'
 
-offset_length = 100 
+offset_length = 100
 
-# Control feeds to be used using observer flags rather than this list. 
+# Control feeds to be used using observer flags rather than this list.
 feeds = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
+
+# Iterative destriper settings
+# Number of outer destriper iterations (1 = standard single-pass destriper)
+n_destriper_iterations = 1
+
+# Planck prior: stabilizes large angular scales by replacing low spatial-frequency
+# modes in the sky estimate with Planck 30 GHz data between iterations.
+# The prior only guides the offset solution — the final map is purely COMAP data.
+use_planck_prior = false
+# Mixing parameter: 0.0 = disabled, 1.0 = full Planck on large scales
+prior_mixing_alpha = 0.5
+# Smoothing FWHM (degrees) for scale separation between COMAP and Planck
+prior_smoothing_fwhm_deg = 0.5
+
+# Save convergence diagnostic plot (offset norm + sky change vs iteration)
+plot_convergence = true
+
+# Path to pointing model parameters (optional, set to enable pointing corrections)
+#pointing_params_path = '/path/to/pointing_params.npy'
 
 [modules.MapMaking.MapMakingModules.CreateMapDayNight.CreateMapDayNight]
 

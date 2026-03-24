@@ -39,7 +39,9 @@ except ModuleNotFoundError:
     from modules.utils.data_handling import read_2bit 
     from modules.SQLModule.SQLModule import COMAPData, db
 
-class SystemTemperature(BaseCOMAPModule): 
+from modules.utils.constants import GROUND_FEED
+
+class SystemTemperature(BaseCOMAPModule):
 
     def __init__(self, plot_vane : bool = False, plot_dir : str = '', plot_tsys : bool = True, overwrite=False) -> None:
         super().__init__()
@@ -113,7 +115,7 @@ class SystemTemperature(BaseCOMAPModule):
             # Plot the vane events
             pyplot.figure(figsize=(12,8))
             for ifeed, feed in enumerate(feeds):
-                if feed == 20:
+                if feed == GROUND_FEED:
                     continue
                 tod = spec_tod[ifeed, idx_start:idx_stop] 
                 tod = (tod - np.min(tod))/(np.max(tod)-np.min(tod))
@@ -139,7 +141,7 @@ class SystemTemperature(BaseCOMAPModule):
             # Plot the vane events
             pyplot.figure(figsize=(12,8))
             for ifeed, feed in enumerate(feeds):
-                if feed == 20:
+                if feed == GROUND_FEED:
                     continue
                 tod = spec_tod[ifeed, idx_start:idx_stop] 
                 tod = (tod - np.min(tod))/(np.max(tod)-np.min(tod))
@@ -167,7 +169,7 @@ class SystemTemperature(BaseCOMAPModule):
             # Plot the vane events
             pyplot.figure(figsize=(12,8))
             for ifeed, feed in enumerate(feeds):
-                if feed == 20:
+                if feed == GROUND_FEED:
                     continue
                 tod = spec_tod[ifeed, idx_start:idx_stop] 
                 tod = (tod - np.min(tod))/(np.max(tod)-np.min(tod))
@@ -225,14 +227,14 @@ class SystemTemperature(BaseCOMAPModule):
         vane_edges = self.find_contiguous_blocks(spec_features, self.VANE_FEATURE)
         n_vane_events = len(vane_edges)
         if n_vane_events < 1:
-            print('No vane events found')
+            logging.warning('No vane events found')
             obsid = int(ds['comap'].attrs['obsid'])
             raise BadCOMAPFile(obsid, "No valid vane events found in data file")
 
         vane_angles = [] 
         vane_hots   = [] 
         vane_colds  = []
-        print('READING VANE DATA')
+        logging.debug('Reading vane data')
         for i, (idx_start,idx_stop) in enumerate(tqdm(vane_edges,desc='Vane Events')):
             vane_angles.append(spec_angle[idx_start:idx_stop])
             min_vane = np.nanmin(spec_angle[idx_start:idx_stop])
@@ -242,7 +244,7 @@ class SystemTemperature(BaseCOMAPModule):
             vane_hots.append(np.nanmean(tod[...,vane_hot_idx], axis=-1))
             vane_cold_idx = np.where((vane_angles[-1] > self.VANE_ANGLE_LOW_CUTOFF))[0]
             vane_colds.append(np.nanmean(tod[...,vane_cold_idx], axis=-1))
-        print('DONE READING VANE DATA')
+        logging.debug('Done reading vane data')
         return T_h, np.array(vane_hots), np.array(vane_colds)
     
     def calculate_system_temperature(self, T_h : float, vane_hots  : np.ndarray, vane_colds : np.ndarray) -> np.ndarray:
@@ -296,7 +298,7 @@ class SystemTemperature(BaseCOMAPModule):
         ptops = []
         pbots = []
         for ifeed, feed in enumerate(feeds):
-            if feed == 20:
+            if feed == GROUND_FEED:
                 continue
             for ievent in range(tsys.shape[0]):
                 if ievent == 0:
@@ -322,7 +324,7 @@ class SystemTemperature(BaseCOMAPModule):
 
         pyplot.figure(figsize=(36,16))
         for ifeed, feed in enumerate(feeds):
-            if feed == 20:
+            if feed == GROUND_FEED:
                 continue
             for ievent in range(tsys.shape[0]):
                 if ievent == 0:
@@ -343,10 +345,10 @@ class SystemTemperature(BaseCOMAPModule):
             features = read_2bit(ds['/hk/array/frame/features'][...])  
 
             if np.any(features == self.VANE_FEATURE):
-                print('Vane feature found')
+                logging.debug('Vane feature found')
                 return False
             else:
-                print('Vane feature not found')
+                logging.debug('Vane feature not found')
                 return True
 
     def measure_system_temperature(self, file_info : COMAPData) -> None:
@@ -376,7 +378,7 @@ class SystemTemperature(BaseCOMAPModule):
                     return 
                 tsys = self.calculate_system_temperature(T_h, vane_hots, vane_colds) 
                 gain = self.calculate_gain(T_h, vane_hots, vane_colds) 
-                print(gain.shape, tsys.shape, vane_hots.shape)
+                logging.debug('gain=%s tsys=%s vane_hots=%s', gain.shape, tsys.shape, vane_hots.shape)
 
         self.save_system_temperature(file_info, tsys, gain)  
 
@@ -390,7 +392,7 @@ class SystemTemperature(BaseCOMAPModule):
         if self.already_processed(file_info, self.overwrite):
             return 
 
-        print('PROCESSING SYSTEM TEMPERATURE FOR:', file_info.level1_path) 
+        logging.info('Processing System Temperature for: %s', file_info.level1_path)
         logging.info(f'Processing System Temperature for {file_info.level1_path}')
         self.measure_system_temperature(file_info) 
 

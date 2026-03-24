@@ -17,6 +17,7 @@ from matplotlib import pyplot
 
 from modules.ProcessLevel2.GainFilterAndBin.GainFilters import GainFilterBase, GainFilterWithPrior
 from modules.pipeline_control.Pipeline import RetryH5PY,BadCOMAPFile,BaseCOMAPModule
+from modules.utils.constants import NFEEDS, NBANDS, GROUND_FEED
 
 class GainFilterAndBin(BaseCOMAPModule): 
 
@@ -24,8 +25,8 @@ class GainFilterAndBin(BaseCOMAPModule):
                  gain_filter_name='GainFilterBase', overwrite=False, gain_filter_kwargs={}) -> None:
         super().__init__()
         # self.NCHANNELS = 1024
-        self.NBANDS = 4
-        self.NFEEDS = 19
+        self.NBANDS = NBANDS
+        self.NFEEDS = NFEEDS
         self.end_cut = end_cut 
         self.n_freq_bin = n_freq_bin
         self.system_temperature_cutoff = 10
@@ -189,7 +190,7 @@ class GainFilterAndBin(BaseCOMAPModule):
 
         return binned_data, binned_filtered_data, central_freqs, bandwidths
     
-    def gain_filter_and_bin(self, file_info : COMAPData, skip_feeds = [20]) -> np.ndarray:
+    def gain_filter_and_bin(self, file_info : COMAPData, skip_feeds = [GROUND_FEED]) -> np.ndarray:
         with RetryH5PY(file_info.level2_path,'r') as lvl2:
             with RetryH5PY(file_info.level1_path,'r') as ds: 
                 feeds = ds['spectrometer/feeds'][:] 

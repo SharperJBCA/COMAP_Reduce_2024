@@ -88,6 +88,8 @@ class Level2Data:
     weights: np.ndarray    # float32, length = n_tod
     # Right-hand side for solver
     rhs: np.ndarray               # float32, length = n_offsets
+    # Raw RHS before sky subtraction (for iterative destriping)
+    rhs_raw: np.ndarray           # float32, length = n_offsets
 
 def _legendre_cols(xn, deg):
     """Legendre columns L0..Ldeg on x normalized to [-1,1]."""
@@ -247,7 +249,9 @@ class Level2DataReader:
         # DB handle (optional)
         database=None,
         jackknife: str = None,   # None | 'odd' | 'even'
-        jackknife_reset: str = "per_file_feed", 
+        jackknife_reset: str = "per_file_feed",
+        # Pointing correction
+        pointing_params_path: Optional[str] = None,
     ):
         self.tod_ds = tod_dataset
         self.offset_length = int(offset_length)
@@ -297,7 +301,11 @@ class Level2DataReader:
             pixels=np.empty(0, np.int64),
             weights=np.empty(0, np.float32),
             rhs=np.empty(0, np.float32),
+            rhs_raw=np.empty(0, np.float32),
         )
+
+        # Prior map reprojected to WCS grid (populated after setup_wcs)
+        self.prior_map_2d = None
 
         # cursors for preallocated arrays
         self._cur_tod = 0
@@ -312,7 +320,12 @@ class Level2DataReader:
         self.jackknife_reset = jackknife_reset
 
 
-        self.pointing_params = np.loadtxt('/scratch/nas_comap1/sharper/student_pipeline_test/COMAP_Reduce_2024/notebooks/pointing_params.txt',delimiter=',')
+        # Pointing correction parameters
+        self.pointing_params_path = pointing_params_path
+        if pointing_params_path and os.path.exists(pointing_params_path):
+            self.pointing_params = np.loadtxt(pointing_params_path, delimiter=',')
+        else:
+            self.pointing_params = None
 
     # ---------------- WCS ----------------
 
@@ -328,6 +341,21 @@ class Level2DataReader:
         self.data.weight_map = np.zeros(self._npix, np.float32)
         self.data.hits_map = np.zeros(self._npix, np.float32)
         self.data.sky_map = np.zeros(self._npix, np.float32)
+        # Reproject Planck prior to WCS grid for iterative destriping
+        self._reproject_prior_to_wcs()
+
+    def _reproject_prior_to_wcs(self):
+        """Project HEALPix Planck map to the flat-sky WCS grid."""
+        if self.planck_30_map is None:
+            self.prior_map_2d = None
+            return
+        ypix, xpix = np.mgrid[:self._ny, :self._nx]
+        gl, gb = self.wcs.all_pix2world(xpix, ypix, 0)
+        nside = hp.npix2nside(len(self.planck_30_map))
+        hpx_idx = hp.ang2pix(nside,
+                             np.radians(90.0 - gb.ravel()),
+                             np.radians(gl.ravel()))
+        self.prior_map_2d = self.planck_30_map[hpx_idx].reshape(self._ny, self._nx).astype(np.float32)
 
     # ------------- counting / prealloc -------------
 
@@ -370,6 +398,7 @@ class Level2DataReader:
         self.data.weights = np.zeros(self._n_tod, np.float32)
         # rhs for solver
         self.data.rhs = np.zeros(self._n_off, np.float32)
+        self.data.rhs_raw = np.zeros(self._n_off, np.float32)
         self._cur_tod = 0
         self._cur_off = 0
         if rank == 0:
@@ -448,10 +477,11 @@ class Level2DataReader:
         mjd = f["spectrometer/MJD"][start:start + length]
         az = f["spectrometer/pixel_pointing/pixel_az"][ifeed, start:start + length]
         el = f["spectrometer/pixel_pointing/pixel_el"][ifeed, start:start + length]
-        # Apply offset corrections 
-        print('POINTING CORRECTION?', apply_pointing_correction)
+        # Apply offset corrections
         if apply_pointing_correction:
-            print('HELLO')
+            if self.pointing_params is None:
+                raise RuntimeError("Pointing correction requested but pointing_params not loaded. "
+                                   "Set pointing_params_path in config.")
             az_offset_deg, el_offset_deg = pointing_offsets_deg(az, el, self.pointing_params[ifeed])
             az = az - az_offset_deg
             el = el - el_offset_deg
@@ -485,9 +515,6 @@ class Level2DataReader:
             tod[...] = 0.0
             w_solver[...] = 0.0
         else:
-            #from matplotlib import pyplot 
-            #coord = el 
-            #pyplot.plot(coord,tod*1,'.')
             tod[not_zero] = remove_trends_from_scan(
                 tod[not_zero] , w_solver[not_zero] ,
                 time_idx=time_idx[not_zero] ,
@@ -502,16 +529,6 @@ class Level2DataReader:
                 highlat_cut=0.75,
                 planck_quiet_cut=0.03,
             )
-            # pyplot.plot(coord,tod*1,'.')
-            # nbins = 10
-            # azedge = np.linspace(np.min(coord),np.max(coord),nbins+1)
-            # azmids = (azedge[1:] + azedge[:-1])/2.
-            # azbin = np.histogram(coord, azedge, weights=tod)[0]/np.histogram(coord, azedge)[0] 
-            # pyplot.plot(azmids, azbin,lw=2)
-            # pyplot.text(0.05,0.9,np.max(azbin)-np.min(azbin),transform=pyplot.gca().transAxes)
-
-            # pyplot.savefig(f'Feed{feed:02d}.png')
-            # pyplot.close()
 
 
         # NaNs → zeroed with zero weight
@@ -651,6 +668,9 @@ class Level2DataReader:
         m = self.data.weight_map > 0
         self.data.sky_map[:] = 0.0
         self.data.sky_map[m] = self.data.sum_map[m] / self.data.weight_map[m]
+
+        # Store raw RHS (F^T N^{-1} d) before sky subtraction, for iterative destriping
+        self.data.rhs_raw[:] = self.data.rhs
 
         # Destriper RHS needs Z d = F^T N^{-1} P m  subtraction using *solver* weights
         bin_funcs.subtract_sky_map_from_rhs(self.data.rhs,

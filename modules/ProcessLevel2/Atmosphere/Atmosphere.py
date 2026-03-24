@@ -17,6 +17,7 @@ import os
 import logging
 import time
 from modules.pipeline_control.Pipeline import RetryH5PY, BaseCOMAPModule
+from modules.utils.constants import NFEEDS, NBANDS, NCHANNELS, GROUND_FEED
 
 class AtmosphereInObservation(BaseCOMAPModule):
     """
@@ -25,9 +26,9 @@ class AtmosphereInObservation(BaseCOMAPModule):
 
     def __init__(self, plot=False, plot_dir='outputs/AtmosphereInObservation', overwrite=False) -> None:
         super().__init__()
-        self.NFEEDS = 19
-        self.NBANDS = 4
-        self.NCHANNELS = 1024
+        self.NFEEDS = NFEEDS
+        self.NBANDS = NBANDS
+        self.NCHANNELS = NCHANNELS
 
         self.plot = plot
         self.plot_dir = plot_dir 
@@ -45,14 +46,14 @@ class AtmosphereInObservation(BaseCOMAPModule):
                 feeds = ds['spectrometer/feeds'][:] 
                 scan_edges = lvl2['level2/scan_edges'][...]
                 gains = lvl2['level2/vane/gain'][0,...]
-                print('GAINS SHAPE',gains.shape)
+                logging.debug('Gains shape: %s', gains.shape)
 
                 n_scans = scan_edges.shape[0] 
                 atmos_offsets = np.zeros((self.NFEEDS, self.NBANDS, self.NCHANNELS, n_scans))
                 atmos_tau     = np.zeros((self.NFEEDS, self.NBANDS, self.NCHANNELS, n_scans))
-                print('NUMBER OF SCANS',n_scans)
+                logging.debug('Number of scans: %d', n_scans)
                 for ifeed, feed in enumerate(tqdm(feeds,desc='Fit Atmosphere')): 
-                    if feed == 20:
+                    if feed == GROUND_FEED:
                         continue 
 
                     
@@ -118,7 +119,7 @@ class AtmosphereInObservation(BaseCOMAPModule):
         atmos_offsets = np.mean(atmos_offsets, axis=3)
         atmos_tau = np.mean(atmos_tau, axis=3)
         for ifeed, feed in enumerate(feeds):
-            if feed == 20:
+            if feed == GROUND_FEED:
                 continue
             plt = pyplot.plot(frequencies, atmos_offsets[ifeed].flatten()[freq_idx], label=f'{feed:02d}',lw=2)
 
@@ -142,7 +143,7 @@ class AtmosphereInObservation(BaseCOMAPModule):
         ptops = []
         pbots = []
         for ifeed, feed in enumerate(feeds):
-            if feed == 20:
+            if feed == GROUND_FEED:
                 continue
             plt = pyplot.plot(frequencies, atmos_tau[ifeed].flatten()[freq_idx], label=f'{feed:02d}',lw=2)
 
@@ -217,9 +218,9 @@ class AtmosphereFromVane:
     """
 
     def __init__(self, plot=False, plot_dir='outputs/AtmosphereInObservation') -> None:
-        self.NFEEDS = 19
-        self.NBANDS = 4
-        self.NCHANNELS = 1024
+        self.NFEEDS = NFEEDS
+        self.NBANDS = NBANDS
+        self.NCHANNELS = NCHANNELS
 
         self.plot = plot
         self.plot_dir = plot_dir 
@@ -258,7 +259,7 @@ class AtmosphereFromVane:
                 atmos_tau     = np.zeros((self.NFEEDS, self.NBANDS, self.NCHANNELS, n_scans))
 
                 for ifeed, feed in enumerate(tqdm(feeds,desc='Fit Atmosphere')): 
-                    if feed == 20:
+                    if feed == GROUND_FEED:
                         continue 
 
                     feed_data = ds[self.target_tod_dataset][ifeed, ...]
@@ -306,7 +307,7 @@ class AtmosphereFromVane:
         atmos_offsets = np.mean(atmos_offsets, axis=3)
         atmos_tau = np.mean(atmos_tau, axis=3)
         for ifeed, feed in enumerate(feeds):
-            if feed == 20:
+            if feed == GROUND_FEED:
                 continue
             plt = pyplot.plot(frequencies, atmos_offsets[ifeed].flatten()[freq_idx], label=f'{feed:02d}',lw=2)
 
@@ -330,7 +331,7 @@ class AtmosphereFromVane:
         ptops = []
         pbots = []
         for ifeed, feed in enumerate(feeds):
-            if feed == 20:
+            if feed == GROUND_FEED:
                 continue
             plt = pyplot.plot(frequencies, atmos_tau[ifeed].flatten()[freq_idx], label=f'{feed:02d}',lw=2)
 
