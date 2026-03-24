@@ -1,22 +1,23 @@
 # run_map_making.py
 #
 # Description:
-#  Main script for calling the MPI destiping code. This is not a module but a script called in CreateMap.py.
+#  Main script for calling the MPI destriping code. This is not a module but a script called in CreateMap.py.
 #  It can be called totally separately from the command line too as long as the correct config file has been created.
 #
-import os 
+import os
 
-from astropy.io import fits 
-import sys 
+from astropy.io import fits
+import sys
 sys.path.append(os.getcwd())
 import logging
 from mpi4py import MPI
 import argparse
 import toml
 import numpy as np
+from scipy.ndimage import gaussian_filter
 from modules.MapMaking.MapMakingModules.ReadData import Level2DataReader
-from modules.MapMaking.MapMakingModules.Destriper import AxCOMAP, cgm
-from modules.utils import bin_funcs 
+from modules.MapMaking.MapMakingModules.Destriper import AxCOMAP, cgm, _norm_global32
+from modules.utils import bin_funcs
 from modules.pipeline_control.Pipeline import BadCOMAPFile, update_log_variable,setup_logging
 
 from modules.SQLModule.SQLModule import SQLModule, COMAPData, QualityFlag
@@ -30,32 +31,33 @@ def load_data(parameters):
 
     file_list = np.loadtxt(parameters['file_list'], dtype=str,ndmin=1)
     n_files = len(file_list)
-    print('NUMBER OF FILES:', n_files)
-    n_files_per_process = n_files // size 
+    logging.info('Number of files: %d', n_files)
+    n_files_per_process = n_files // size
     rank_start = rank * n_files_per_process
-    rank_end   = (rank + 1) * n_files_per_process if rank < size - 1 else n_files 
+    rank_end   = (rank + 1) * n_files_per_process if rank < size - 1 else n_files
 
     if parameters['database'] is not None:
-        db = SQLModule() 
+        db = SQLModule()
         db.connect(parameters['database'])
     else:
         db = None
 
-    local_data = Level2DataReader(tod_dataset=parameters['tod_data_name'], 
-                                          offset_length=parameters['offset_length'], 
+    local_data = Level2DataReader(tod_dataset=parameters['tod_data_name'],
+                                          offset_length=parameters['offset_length'],
                                           planck_30_path=parameters['planck_30_path'],
-                                          calib_path=parameters['calib_path'], 
+                                          calib_path=parameters['calib_path'],
                                           sigma_red_cutoff=parameters['sigma_red_cutoff'],
                                           database=db,
                                           jackknife=parameters.get('jackknife_odd_even',None),
-                                          band_index=parameters['band'])
+                                          band_index=parameters['band'],
+                                          pointing_params_path=parameters.get('pointing_params_path', None))
     db.disconnect()
     band, channel = np.unravel_index(parameters['band'], (4,2))
 
     local_data.setup_wcs(parameters['wcs_def'])
 
     if local_data.read_files([file_list[i] for i in range(rank_start, rank_end)],
-                             use_flags=False, 
+                             use_flags=False,
                              feeds=parameters['feeds'],
                              apply_pointing_correction=parameters['apply_pointing_correction']):
         return local_data
@@ -69,11 +71,93 @@ def run_destriper(local_data, parameters):
             lambda_ridge = parameters.get("lambda_ridge", 0.0),
             alpha_grad   = parameters.get("alpha_grad",   0.0),
             alpha_curv   = parameters.get("alpha_curv",   0.0))
- 
 
-    offsets = cgm(Ax, threshold=parameters.get('threshold', 1e-6)) 
+    offsets = cgm(Ax, threshold=parameters.get('threshold', 1e-6),
+                  return_offset_map=True)
 
     return offsets
+
+
+def update_sky_estimate(local_data, offset_map, parameters):
+    """
+    After a destriper solve, update the sky estimate by:
+    1. Compute offset-subtracted data map
+    2. Replace large-scale component with Planck prior (if enabled)
+    3. Recompute RHS for next iteration
+    """
+    ny = int(local_data.header["NAXIS2"])
+    nx = int(local_data.header["NAXIS1"])
+    alpha = parameters.get("prior_mixing_alpha", 0.0)
+    sigma_deg = parameters.get("prior_smoothing_fwhm_deg", 0.5)  # 30 arcmin default
+    pixel_deg = abs(float(local_data.header["CDELT2"]))
+    sigma_pix = (sigma_deg / 2.355) / pixel_deg  # FWHM → Gaussian sigma in pixels
+
+    # 1. Offset-subtracted data map
+    hit = local_data.data.weight_map > 0
+    m_data = np.zeros_like(local_data.data.sky_map)
+    m_data[hit] = local_data.data.sky_map[hit] - offset_map[hit]
+    m_data_2d = m_data.reshape(ny, nx)
+
+    if alpha > 0 and local_data.prior_map_2d is not None:
+        # 2. Scale separation: smooth both maps to common resolution
+        m_data_smooth = gaussian_filter(np.nan_to_num(m_data_2d), sigma=sigma_pix).astype(np.float32)
+        m_prior_smooth = gaussian_filter(np.nan_to_num(local_data.prior_map_2d), sigma=sigma_pix).astype(np.float32)
+
+        # 3. Blend: small-scale COMAP + large-scale Planck
+        m_new_2d = (m_data_2d - m_data_smooth) + np.float32(alpha) * m_prior_smooth
+        m_new = m_new_2d.ravel().astype(np.float32)
+    else:
+        # No prior: just use offset-subtracted data map
+        m_new = m_data.astype(np.float32)
+
+    # 4. Update sky_map and recompute RHS from raw
+    local_data.data.sky_map[:] = m_new
+    local_data.data.rhs[:] = local_data.data.rhs_raw.copy()
+    bin_funcs.subtract_sky_map_from_rhs(
+        local_data.data.rhs, local_data.data.weights,
+        local_data.data.sky_map, local_data.data.pixels,
+        local_data.data.offset_length
+    )
+
+    return m_new
+
+
+def plot_convergence(offset_norms, sky_changes, parameters):
+    """
+    Save a two-panel convergence diagnostic plot.
+    Left: ||offset||₂ vs iteration
+    Right: relative sky change vs iteration
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    from matplotlib import pyplot as plt
+
+    n_iter = len(offset_norms)
+    iters = np.arange(1, n_iter + 1)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+
+    ax1.plot(iters, offset_norms, 'o-', color='C0')
+    ax1.set_xlabel('Iteration')
+    ax1.set_ylabel('||offset||₂')
+    ax1.set_title('Offset norm')
+    ax1.set_yscale('log')
+
+    if len(sky_changes) > 0:
+        ax2.plot(iters[:len(sky_changes)], sky_changes, 's-', color='C1')
+        ax2.set_xlabel('Iteration')
+        ax2.set_ylabel('||Δm|| / ||m||')
+        ax2.set_title('Relative sky change')
+        ax2.set_yscale('log')
+
+    fig.suptitle(f"Destriper convergence ({n_iter} iterations)")
+
+    os.makedirs(parameters["output_dir"], exist_ok=True)
+    out = os.path.join(parameters["output_dir"],
+                       parameters["output_filename"].replace('.fits', '_convergence.png'))
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    logging.info("Saved convergence plot: %s", out)
 
 
 def create_maps(
@@ -194,16 +278,21 @@ def create_maps(
         h["HIERARCH PIPE.EDGEW"]  = int(edge_width)
         h["HIERARCH PIPE.CLIPLO"] = float(edge_clip_percentiles[0])
         h["HIERARCH PIPE.CLIPHI"] = float(edge_clip_percentiles[1])
+        h["HIERARCH PIPE.NITER"]  = int(parameters.get("n_destriper_iterations", 1))
+        h["HIERARCH PIPE.ALPHA"]  = float(parameters.get("prior_mixing_alpha", 0.0))
+        h["HIERARCH PIPE.SMFWHM"] = float(parameters.get("prior_smoothing_fwhm_deg", 0.5))
         # solver regularisation (Planck)
         h["HIERARCH REG.PLANCKCUT"]  = float(getattr(local_data, "planck_quiet_cut_soft", np.nan))
         h["HIERARCH REG.PLANCKDW"]   = float(getattr(local_data, "planck_downweight", np.nan))
         # band/channel/feeds
         h["HIERARCH DATA.BANDIDX"] = int(getattr(local_data, "band_index", -1))
-        #h["HIERARCH DATA.FEEDS"]   = str(parameters.get("feeds", "all"))
         # history trail
         h.add_history("Destriped map = sky - offset_map")
         h.add_history(f"Masked low-hits below {hit_percentile:.1f}th percentile (>= {hit_thresh:.1f})")
         h.add_history(f"Clipped border outliers using interior percentiles {edge_clip_percentiles}")
+        n_iter = parameters.get("n_destriper_iterations", 1)
+        if n_iter > 1:
+            h.add_history(f"Iterative destriping: {n_iter} iterations, alpha={parameters.get('prior_mixing_alpha', 0.0)}")
 
     for hdu in hdus:
         _provenance(hdu.header)
@@ -226,64 +315,56 @@ def create_maps(
     out = os.path.join(parameters["output_dir"], parameters["output_filename"])
     hdul.writeto(out, overwrite=True)
 
-def create_maps_old(offset_map, local_data, parameters):
-    """Create maps from the offsets."""
-
-    rms_map = np.zeros_like(local_data.data.sum_map, dtype=np.float32)
-    destriped_map = np.zeros_like(local_data.data.sum_map, dtype=np.float32) 
-
-    mask = local_data.data.hits_map > 0 
-    destriped_map[mask] = local_data.data.sky_map[mask] - offset_map[mask] 
-
-    lower_hit_bound = np.percentile(local_data.data.hits_map[mask], 5) 
-
-    mask = local_data.data.hits_map > lower_hit_bound
-    rms_map[~mask] = np.nan
-    rms_map[mask] = np.sqrt(1./local_data.data.weight_map[mask])  
-    
-
-    destriped_map[~mask] = np.nan
-    local_data.data.sky_map[~mask] = np.nan 
-    local_data.data.hits_map[~mask] = np.nan 
-
-    wcs = local_data.wcs  
-    naxis2 = local_data.header['NAXIS2']
-    naxis1 = local_data.header['NAXIS1']
-
-
-    primary_hdu = fits.PrimaryHDU(destriped_map.reshape(naxis2, naxis1))
-    sky_hdu     = fits.ImageHDU(local_data.data.sky_map.reshape(naxis2, naxis1), name='NAIVE')
-    hits_hdu    = fits.ImageHDU(local_data.data.hits_map.reshape(naxis2, naxis1), name='HITS')
-    rms_hdu     = fits.ImageHDU(rms_map.reshape(naxis2, naxis1), name='RMS')
-
-    for hdu in [primary_hdu, sky_hdu, hits_hdu, rms_hdu]:
-        hdu.header.update(wcs.to_header())
-
-    hdul = fits.HDUList([primary_hdu, sky_hdu, hits_hdu, rms_hdu])
-    os.makedirs(parameters['output_dir'], exist_ok=True)
-    hdul.writeto(f"{parameters['output_dir']}/{parameters['output_filename']}", overwrite=True)
-
-
 
 def main():
-    
+
     parser = argparse.ArgumentParser(description='Run the map making code')
     parser.add_argument('config_file', type=str, help='Path to the configuration file')
     args = parser.parse_args()
 
-    parameters = toml.load(args.config_file) 
+    parameters = toml.load(args.config_file)
     setup_logging(parameters['log_file_name'], prefix_date=False)
     update_log_variable('Rank: {:02d}'.format(rank))
 
-    local_data = load_data(parameters) 
+    local_data = load_data(parameters)
 
     if local_data is None:
         return
 
-    offset_map = run_destriper(local_data, parameters) 
+    n_iter = parameters.get("n_destriper_iterations", 1)
+    offset_map = None
+    offset_norms = []
+    sky_changes = []
+    prev_sky = None
+
+    for k in range(n_iter):
+        if rank == 0:
+            logging.info("[destriper] outer iteration %d/%d", k + 1, n_iter)
+
+        offset_map = run_destriper(local_data, parameters)
+
+        # Track convergence diagnostics
+        off_norm = float(np.sqrt(np.nansum(offset_map**2)))
+        offset_norms.append(off_norm)
+
+        if k < n_iter - 1:
+            m_new = update_sky_estimate(local_data, offset_map, parameters)
+
+            if prev_sky is not None:
+                m_norm = float(np.sqrt(np.nansum(prev_sky**2)))
+                if m_norm > 0:
+                    sky_changes.append(float(np.sqrt(np.nansum((m_new - prev_sky)**2))) / m_norm)
+            prev_sky = m_new.copy()
+
+        if rank == 0:
+            logging.info("[destriper] iter %d: ||offset||=%.4e", k + 1, off_norm)
 
     if rank == 0:
-        maps = create_maps(offset_map, local_data, parameters) 
+        create_maps(offset_map, local_data, parameters)
+
+        # Convergence plot
+        if n_iter > 1 and parameters.get("plot_convergence", True):
+            plot_convergence(offset_norms, sky_changes, parameters)
 
 if __name__ == "__main__":
-    main()  
+    main()

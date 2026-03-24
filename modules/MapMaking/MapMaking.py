@@ -71,10 +71,11 @@ def get_file_list(target_source_group=None, target_source=None, min_obs_id=7000,
 
 
 class MapMaking:
-    def __init__(self, config_file="") -> None:
-        logging.info("Initializing MapMaking")
+    def __init__(self, config_file="", line_mode=False) -> None:
+        logging.info("Initializing MapMaking (line_mode=%s)", line_mode)
 
         self.config_file = config_file
+        self.line_mode = line_mode
         self.parameters = read_parameter_file(self.config_file) if os.path.exists(config_file) else {}
 
     def _load_module(self, module_info):
@@ -91,10 +92,12 @@ class MapMaking:
             fileinfo = db.query_obsid_list(obsid_list, return_dict=False)
             return [entry.level2_path for _, entry in fileinfo.items() if entry.level2_path is not None]
 
+        file_list_func = get_line_file_list if self.line_mode else get_file_list
+
         if isinstance(module.source, list):
             final_files = []
             for src in module.source:
-                final_files += get_file_list(
+                final_files += file_list_func(
                     target_source_group=module.source_group,
                     target_source=src,
                     min_obs_id=min_obs_id,
@@ -103,7 +106,7 @@ class MapMaking:
                 )
             return final_files
 
-        return get_file_list(
+        return file_list_func(
             target_source_group=module.source_group,
             target_source=module.source,
             min_obs_id=min_obs_id,
@@ -112,7 +115,7 @@ class MapMaking:
         )
 
     def run(self) -> None:
-        logging.info("Running MapMaking")
+        logging.info("Running MapMaking (line_mode=%s)", self.line_mode)
 
         min_obs_id = self.parameters["Master"].get("min_obsid", 7000)
         max_obs_id = self.parameters["Master"].get("max_obsid", 100000)
@@ -178,44 +181,8 @@ def get_line_file_list(target_source_group=None, target_source=None, min_obs_id=
     return final_files
 
 
-class LineMapMaking:
+class LineMapMaking(MapMaking):
+    """Backward-compatible alias: MapMaking with line_mode=True."""
+
     def __init__(self, config_file="") -> None:
-        logging.info("Initializing MapMaking")
-
-        self.config_file = config_file
-        self.parameters = read_parameter_file(self.config_file) if os.path.exists(config_file) else {}
-
-    def run(self) -> None:
-        logging.info("Running MapMaking")
-
-        min_obs_id = self.parameters["Master"].get("min_obsid", 7000)
-        max_obs_id = self.parameters["Master"].get("max_obsid", 100000)
-        obsid_list = self.parameters["Master"].get("obsid_list", None)
-
-        for module_info in self.parameters["Master"]["_pipeline"]:
-            package = module_info["package"]
-            module = module_info["module"]
-            args = module_info["args"]
-            module = getattr(importlib.import_module(package), module)
-            module = module(**args)
-
-            if isinstance(module.source, list):
-                final_files = []
-                for src in module.source:
-                    final_files += get_line_file_list(
-                        target_source_group=module.source_group,
-                        target_source=src,
-                        min_obs_id=min_obs_id,
-                        max_obs_id=max_obs_id,
-                        obsid_list=obsid_list,
-                    )
-            else:
-                final_files = get_line_file_list(
-                    target_source_group=module.source_group,
-                    target_source=module.source,
-                    min_obs_id=min_obs_id,
-                    max_obs_id=max_obs_id,
-                    obsid_list=obsid_list,
-                )
-
-            module.run(final_files)
+        super().__init__(config_file=config_file, line_mode=True)
