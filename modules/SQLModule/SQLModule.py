@@ -92,6 +92,8 @@ class ObservationSummary(Base):
     calibrator_chi2: Mapped[float | None] = mapped_column(nullable=True, default=None)
     pointing_offset_az: Mapped[float | None] = mapped_column(nullable=True, default=None)
     pointing_offset_el: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    pointing_offset_ra: Mapped[float | None] = mapped_column(nullable=True, default=None)
+    pointing_offset_dec: Mapped[float | None] = mapped_column(nullable=True, default=None)
 
     # Scan info
     n_scans: Mapped[int | None] = mapped_column(nullable=True, default=None)
@@ -671,6 +673,8 @@ class SQLModule:
                 'calibrator_chi2': summary.calibrator_chi2,
                 'pointing_offset_az': summary.pointing_offset_az,
                 'pointing_offset_el': summary.pointing_offset_el,
+                'pointing_offset_ra': summary.pointing_offset_ra,
+                'pointing_offset_dec': summary.pointing_offset_dec,
                 'n_scans': summary.n_scans,
             }
 
@@ -802,6 +806,8 @@ class SQLModule:
                     'calibrator_chi2': summary.calibrator_chi2,
                     'pointing_offset_az': summary.pointing_offset_az,
                     'pointing_offset_el': summary.pointing_offset_el,
+                    'pointing_offset_ra': summary.pointing_offset_ra,
+                    'pointing_offset_dec': summary.pointing_offset_dec,
                     'n_scans': summary.n_scans,
                 })
             results.append(row)

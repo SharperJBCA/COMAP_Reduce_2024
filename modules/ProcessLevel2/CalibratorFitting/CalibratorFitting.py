@@ -1,35 +1,34 @@
 # CalibratorFitting.py
 #
 # Description:
-#  Implements fitting routines for TauA/CasA/CygA/Jupiter/etc... calibration observations 
-# 
+#  Implements fitting routines for TauA/CasA/CygA/Jupiter/etc... calibration observations
+#
 # History:
-#  24/03/25 - SH: Initial version based on original pipeline implementation. 
+#  24/03/25 - SH: Initial version based on original pipeline implementation.
 
 import numpy as np
 import numpy.ma as ma
 from tqdm import tqdm
-import h5py 
-from itertools import product 
-import sys 
+import h5py
+from itertools import product
+import sys
 import healpy as hp
 from scipy.ndimage import gaussian_filter
 from astropy.modeling import models, fitting
 import astropy.units as u
 from astropy.modeling.functional_models import Gaussian2D
 from astropy.modeling.models import custom_model
-from matplotlib import pyplot 
+from matplotlib import pyplot
 from astroquery.jplhorizons import Horizons
-import time 
+import time
 from datetime import datetime
-import logging 
+import logging
 from scipy.stats import binned_statistic_2d
 from astropy.time import Time
 from astropy.coordinates import SkyCoord, AltAz, EarthLocation
 
 
 try:
-    from modules.utils.data_handling import read_2bit
     from modules.SQLModule.SQLModule import COMAPData, db
     from modules.pipeline_control.Pipeline import BadCOMAPFile, RetryH5PY,BaseCOMAPModule
     try:
@@ -41,7 +40,6 @@ except ModuleNotFoundError:
     from pathlib import Path
     import sys
     sys.path.append(str(Path(__file__).parent.parent.parent.parent))
-    from modules.utils.data_handling import read_2bit
     from modules.SQLModule.SQLModule import COMAPData,db
     from modules.pipeline_control.Pipeline import BadCOMAPFile, RetryH5PY,BaseCOMAPModule
     try:
@@ -52,12 +50,12 @@ except ModuleNotFoundError:
 from modules.utils.constants import GROUND_FEED
 
 
-
-
 def _get_body_radec_from_mjd(mjd, target_id="599"):
     """
     Generic helper: get RA/Dec (ICRF, deg) for a solar-system body
     at a given UTC MJD using JPL Horizons (via astroquery).
+
+    Uses topocentric coordinates for the COMAP site.
 
     target_id:
         '599' = Jupiter, '699' = Saturn, etc.
@@ -65,16 +63,20 @@ def _get_body_radec_from_mjd(mjd, target_id="599"):
     # Horizons wants JD, not MJD
     jd = mjd + 2400000.5
 
-    location = {'lon':comap_longitude*u.deg,
-                'lat':comap_latitude*u.deg,
-                'elevation':1222.0 * u.m}
+    location = {'lon': comap_longitude * u.deg,
+                'lat': comap_latitude * u.deg,
+                'elevation': 1222.0 * u.m}
 
-    # 500 = geocentric observer
-    obj = Horizons(id=target_id,
-                   location='500',   # Earth geocentre
-                   epochs=jd)
-    print(obj)
-    eph = obj.ephemerides(quantities=1)  # RA/Dec in degrees (ICRF)
+    try:
+        obj = Horizons(id=target_id,
+                       location=location,
+                       epochs=jd)
+        logging.debug('Horizons query: %s', obj)
+        eph = obj.ephemerides(quantities=1)  # RA/Dec in degrees (ICRF)
+    except Exception as e:
+        raise RuntimeError(
+            f"JPL Horizons query failed for target {target_id} at MJD {mjd}: {e}"
+        ) from e
 
     ra = float(eph['RA'][0])   # deg
     dec = float(eph['DEC'][0]) # deg
@@ -120,75 +122,73 @@ def fit_gaussian2d_with_errors(x, y, z, sigma=None):
 
 class CalibratorFitting(BaseCOMAPModule):
 
-    def __init__(self, calibrator_fit_group_name='calibrator_fit', overwrite=False, fit_radius=15./60.): 
+    def __init__(self, calibrator_fit_group_name='calibrator_fit', overwrite=False, fit_radius=15./60.):
         super().__init__()
 
-        self.overwrite = overwrite 
+        self.overwrite = overwrite
         self.calibrator_fit_group_name = calibrator_fit_group_name
         self.fit_radius = fit_radius
 
     def save_data(self, file_info : COMAPData) -> None:
-        with RetryH5PY(file_info.level2_path, 'a') as ds:
-            if not 'level2' in ds:
-                ds.create_group('level2')
-            grp = ds['level2']
-            if f'{self.calibrator_fit_group_name}' in grp:
-                del grp[f'{self.calibrator_fit_group_name}']
-            grp.create_group(f'{self.calibrator_fit_group_name}')
-            grp = grp[f'{self.calibrator_fit_group_name}']
+        with RetryH5PY(file_info.level2_path, 'a') as f:
+            if 'level2' not in f:
+                f.create_group('level2')
+            grp = f['level2']
+            if self.calibrator_fit_group_name in grp:
+                del grp[self.calibrator_fit_group_name]
+            grp.create_group(self.calibrator_fit_group_name)
+            grp = grp[self.calibrator_fit_group_name]
 
-            print('creating group', grp.name) 
-            print('creating amplitudes')
-            ds = grp.create_dataset('amplitudes', data=self.best_fits[0])
-            ds.attrs['unit'] = 'K'
-            ds = grp.create_dataset('amplitude_errors', data=self.errs_fits[0])
-            ds.attrs['unit'] = 'K'
+            logging.debug('Creating calibrator fit group: %s', grp.name)
 
-            print('creating offsets')
-            ds = grp.create_dataset('ra_offset', data=self.best_fits[1])
-            ds.attrs['unit'] = 'degrees'
-            ds = grp.create_dataset('ra_offset_errors', data=self.errs_fits[1]) 
-            ds.attrs['unit'] = 'degrees'
+            dset = grp.create_dataset('amplitudes', data=self.best_fits[0])
+            dset.attrs['unit'] = 'K'
+            dset = grp.create_dataset('amplitude_errors', data=self.errs_fits[0])
+            dset.attrs['unit'] = 'K'
 
-            ds = grp.create_dataset('dec_offset', data=self.best_fits[2])
-            ds.attrs['unit'] = 'degrees'
-            ds = grp.create_dataset('dec_offset_errors', data=self.errs_fits[2])
-            ds.attrs['unit'] = 'degrees'
+            dset = grp.create_dataset('ra_offset', data=self.best_fits[1])
+            dset.attrs['unit'] = 'degrees'
+            dset = grp.create_dataset('ra_offset_errors', data=self.errs_fits[1])
+            dset.attrs['unit'] = 'degrees'
 
+            dset = grp.create_dataset('dec_offset', data=self.best_fits[2])
+            dset.attrs['unit'] = 'degrees'
+            dset = grp.create_dataset('dec_offset_errors', data=self.errs_fits[2])
+            dset.attrs['unit'] = 'degrees'
 
-            ds = grp.create_dataset('az_offset', data=self.delta_az[0])
-            ds.attrs['unit'] = 'degrees'
-            ds = grp.create_dataset('az_offset_errors', data=self.delta_az[1])
-            ds.attrs['unit'] = 'degrees'
+            dset = grp.create_dataset('az_offset', data=self.delta_az[0])
+            dset.attrs['unit'] = 'degrees'
+            dset = grp.create_dataset('az_offset_errors', data=self.delta_az[1])
+            dset.attrs['unit'] = 'degrees'
 
-            ds = grp.create_dataset('el_offset', data=self.delta_el[0])
-            ds.attrs['unit'] = 'degrees'
-            ds = grp.create_dataset('el_offset_errors', data=self.delta_el[1]) 
-            ds.attrs['unit'] = 'degrees'
+            dset = grp.create_dataset('el_offset', data=self.delta_el[0])
+            dset.attrs['unit'] = 'degrees'
+            dset = grp.create_dataset('el_offset_errors', data=self.delta_el[1])
+            dset.attrs['unit'] = 'degrees'
 
-            ds = grp.create_dataset('major_std', data=self.best_fits[3])
-            ds.attrs['unit'] = 'degrees'
-            ds = grp.create_dataset('major_std_errors', data=self.errs_fits[3])
-            ds.attrs['unit'] = 'degrees'
+            dset = grp.create_dataset('major_std', data=self.best_fits[3])
+            dset.attrs['unit'] = 'degrees'
+            dset = grp.create_dataset('major_std_errors', data=self.errs_fits[3])
+            dset.attrs['unit'] = 'degrees'
 
-            ds = grp.create_dataset('minor_std', data=self.best_fits[4])
-            ds.attrs['unit'] = 'degrees'
-            ds = grp.create_dataset('minor_std_errors', data=self.errs_fits[4])
-            ds.attrs['unit'] = 'degrees'
+            dset = grp.create_dataset('minor_std', data=self.best_fits[4])
+            dset.attrs['unit'] = 'degrees'
+            dset = grp.create_dataset('minor_std_errors', data=self.errs_fits[4])
+            dset.attrs['unit'] = 'degrees'
 
-            ds = grp.create_dataset('position_angle', data=self.best_fits[5])
-            ds.attrs['unit'] = 'degrees'
-            ds = grp.create_dataset('position_angle_errors', data=self.errs_fits[5])
-            ds.attrs['unit'] = 'degrees'
+            dset = grp.create_dataset('position_angle', data=self.best_fits[5])
+            dset.attrs['unit'] = 'degrees'
+            dset = grp.create_dataset('position_angle_errors', data=self.errs_fits[5])
+            dset.attrs['unit'] = 'degrees'
 
-            ds = grp.create_dataset('chi2', data=self.chi2_fits)
+            grp.create_dataset('chi2', data=self.chi2_fits)
 
             flux = self.get_flux_density(self.best_fits)
             flux_errors = self.get_flux_density_errors(self.best_fits, self.errs_fits)
-            ds = grp.create_dataset('flux', data=flux)
-            ds.attrs['unit'] = 'Jy'
-            ds = grp.create_dataset('flux_errors', data=flux_errors)
-            ds.attrs['unit'] = 'Jy'
+            dset = grp.create_dataset('flux', data=flux)
+            dset.attrs['unit'] = 'Jy'
+            dset = grp.create_dataset('flux_errors', data=flux_errors)
+            dset.attrs['unit'] = 'Jy'
 
         # Store summary calibrator statistics in SQL for easy querying
         db.update_observation_summary(
@@ -198,6 +198,8 @@ class CalibratorFitting(BaseCOMAPModule):
             calibrator_chi2=float(np.nanmedian(self.chi2_fits)),
             pointing_offset_az=float(np.nanmedian(self.delta_az[0])),
             pointing_offset_el=float(np.nanmedian(self.delta_el[0])),
+            pointing_offset_ra=float(np.nanmedian(self.best_fits[1])),
+            pointing_offset_dec=float(np.nanmedian(self.best_fits[2])),
         )
 
     def get_flux_density(self, best_fits : np.ndarray) -> np.ndarray:
@@ -206,26 +208,39 @@ class CalibratorFitting(BaseCOMAPModule):
         """
         k = 1.380649e-23  # Boltzmann constant in J/K
         c = 2.99792458e8  # Speed of light in m/s
-        frequencies = np.array([[26.5,27.5],[28.5,29.5],[30.5,31.5],[32.5,33.5]])*1e9  # Frequencies in Hz 
-        amp, ra_offset, dec_offset, major_std, minor_std, position_angle = best_fits 
+        frequencies = np.array([[26.5,27.5],[28.5,29.5],[30.5,31.5],[32.5,33.5]])*1e9  # Frequencies in Hz
+        amp, ra_offset, dec_offset, major_std, minor_std, position_angle = best_fits
 
         const = 2 * k * (frequencies/c)**2 * 1e26 # Convert to Jy
-        flux = 2*np.pi * amp * np.radians(major_std) * np.radians(minor_std) * const[None,...] 
+        flux = 2*np.pi * amp * np.radians(major_std) * np.radians(minor_std) * const[None,...]
 
         return flux
-    
+
     def get_flux_density_errors(self, best_fits : np.ndarray, best_fit_errs : np.ndarray) -> np.ndarray:
         """
-        Get the flux density from the best fits
+        Get the flux density errors with full error propagation.
+        F = 2π × amp × σ_major × σ_minor × const
+        δF/F = sqrt((δamp/amp)² + (δσ_maj/σ_maj)² + (δσ_min/σ_min)²)
         """
         flux = self.get_flux_density(best_fits)
 
-        return np.abs(flux * best_fit_errs[0] / best_fits[0])
+        amp, _, _, major_std, minor_std, _ = best_fits
+        d_amp, _, _, d_major_std, d_minor_std, _ = best_fit_errs
+
+        # Avoid division by zero for unfitted channels
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rel_err = np.sqrt(
+                (d_amp / amp)**2 +
+                (d_major_std / major_std)**2 +
+                (d_minor_std / minor_std)**2
+            )
+
+        return np.abs(flux * rel_err)
 
 
     def get_relative_coordinates(self, az : np.ndarray, el : np.ndarray, mjd : np.ndarray, longitude : float, latitude : float, src_ra : float, src_dec : float, obsid : int) -> np.ndarray:
         """
-        Get the relative sky coordinates for feed feed 
+        Get the relative sky coordinates for feed feed
         """
         try:
             if obsid < 28852:
@@ -233,25 +248,54 @@ class CalibratorFitting(BaseCOMAPModule):
                 az[azpos] += 100./3600. # Corrects for raster scan drift
             ra, dec = h2e_full(az, el, mjd, longitude, latitude)
         except ValueError:
-            raise BadCOMAPFile('Bad coordinates')
-        
+            raise BadCOMAPFile(obsid, 'Bad coordinates')
+
         rot = hp.Rotator(rot=[src_ra, src_dec])
         rel_ra, rel_dec = rot(ra, dec, lonlat=True)
 
         return rel_ra, rel_dec
-    
+
     def rotate_pa(self, delta_ra, delta_dec, pa):
-        delta_az = np.cos(pa)*delta_ra + np.sin(pa)*delta_dec 
-        delta_el =-np.sin(pa)*delta_ra + np.cos(pa)*delta_dec 
-        return delta_az, delta_el 
+        delta_az = np.cos(pa)*delta_ra + np.sin(pa)*delta_dec
+        delta_el =-np.sin(pa)*delta_ra + np.cos(pa)*delta_dec
+        return delta_az, delta_el
+
     def rotate_pa_error(self, error_ra, error_dec, pa):
-        cq, sq = np.cos(pa), np.sin(pa) 
+        cq, sq = np.cos(pa), np.sin(pa)
         R = np.array([[ cq, sq],
                       [-sq, cq]])
         cov = np.array([[error_ra**2, 0],
                         [0          , error_dec**2]])
-        cov_azel = R @ cov @ R.T 
+        cov_azel = R @ cov @ R.T
         return np.diag(cov_azel)**0.5
+
+    def _validate_fit(self, p_gauss, e_gauss, feed, iband, ichan):
+        """Check fit parameters for clearly unphysical values. Returns True if valid."""
+        amp, ra_off, dec_off, major_std, minor_std, theta = p_gauss
+
+        if amp < 0:
+            logging.debug('Negative amplitude for feed %d band %d chan %d: %.3g',
+                         feed, iband, ichan, amp)
+            return False
+
+        if major_std < 0 or minor_std < 0:
+            logging.debug('Negative beam width for feed %d band %d chan %d: major=%.3g minor=%.3g',
+                         feed, iband, ichan, major_std, minor_std)
+            return False
+
+        beam_expected = 4.5 / 60.0 / 2.355  # expected beam sigma in degrees
+        if major_std > 3 * beam_expected or minor_std > 3 * beam_expected:
+            logging.debug('Beam too large for feed %d band %d chan %d: major=%.3g minor=%.3g',
+                         feed, iband, ichan, major_std, minor_std)
+            return False
+
+        offset_r2 = ra_off**2 + dec_off**2
+        if offset_r2 > self.fit_radius**2:
+            logging.debug('Offset exceeds fit radius for feed %d band %d chan %d: r=%.4f deg',
+                         feed, iband, ichan, np.sqrt(offset_r2))
+            return False
+
+        return True
 
     def fit_sources(self, file_info : COMAPData) -> None:
 
@@ -260,26 +304,17 @@ class CalibratorFitting(BaseCOMAPModule):
             if f['level2/scan_edges'].shape[0] == 0:
                 raise BadCOMAPFile(file_info.obsid, "No Scan Edges found in file")
 
+            # Calibrator observations have exactly one scan
             scan_start,scan_end = f['level2/scan_edges'][0,:]
             mjd = f['spectrometer/MJD'][scan_start:scan_end]
             obsid = file_info.obsid
 
             if file_info.source.lower() == 'jupiter':
                 src_ra, src_dec = get_jupiter_radec_from_mjd(np.nanmedian(mjd))
-
-                location = EarthLocation.from_geodetic(
-                    lon=comap_longitude * u.deg,
-                    lat=comap_latitude * u.deg,
-                    height=1200 * u.m,
-)
-                altaz_frame = AltAz(obstime=Time(np.nanmedian(mjd),format='mjd'), location=location)
-
-                src_coord = SkyCoord(src_ra*u.deg, src_dec*u.deg, frame='icrs')
-                src_altaz = src_coord.transform_to(altaz_frame)
             else:
-                src_ra, src_dec = CalibratorList[file_info.source] 
+                src_ra, src_dec = CalibratorList[file_info.source]
 
-            min_obs_pa = pa(np.array([src_ra]), np.array([src_dec]), np.array([np.min(mjd)]), comap_longitude, comap_latitude) 
+            min_obs_pa = pa(np.array([src_ra]), np.array([src_dec]), np.array([np.min(mjd)]), comap_longitude, comap_latitude)
             max_obs_pa = pa(np.array([src_ra]), np.array([src_dec]), np.array([np.max(mjd)]), comap_longitude, comap_latitude)
             mean_pa = np.mean([max_obs_pa,min_obs_pa])
 
@@ -298,16 +333,13 @@ class CalibratorFitting(BaseCOMAPModule):
                 el = f['spectrometer/pixel_pointing/pixel_el'][ifeed,scan_start:scan_end]
                 tod =  f['level2/binned_filtered_data'][feed-1,...]
                 rel_ra, rel_dec = self.get_relative_coordinates(az,el,mjd,comap_longitude,comap_latitude, src_ra, src_dec, obsid)
-                mask = (rel_ra**2 + rel_dec**2) < self.fit_radius**2 
+                mask = (rel_ra**2 + rel_dec**2) < self.fit_radius**2
 
                 beam_sigma = 4.5/60.0/2.355
                 r2 = rel_ra**2 + rel_dec**2
 
                 for iband, ichan in tqdm(product(range(n_bands), range(n_channels)),desc=f'Processing Feed {feed}'):
                     data = tod[iband,ichan,scan_start:scan_end]
-
-                    N = data.size//2 * 2
-                    rms_data = np.nanstd(data[:N:2]-data[1:N:2])/np.sqrt(2)
 
                     annulus = (r2 > (1.5*beam_sigma)**2) & (r2 < (3.0*beam_sigma)**2)
 
@@ -318,38 +350,45 @@ class CalibratorFitting(BaseCOMAPModule):
                         rms_data = np.nanstd(data[:N:2] - data[1:N:2]) / np.sqrt(2)
 
                     if (rms_data == 0) | np.isnan(rms_data):
+                        logging.debug('Zero/NaN RMS for feed %d band %d chan %d, skipping',
+                                     feed, iband, ichan)
                         continue
                     mask_data = mask & np.isfinite(data)
 
-                    data = data[mask_data] 
+                    data = data[mask_data]
                     rel_ra_masked = rel_ra[mask_data]
                     rel_dec_masked = rel_dec[mask_data]
                     if len(data) < 10:
+                        logging.debug('Insufficient data for feed %d band %d chan %d (%d samples), skipping',
+                                     feed, iband, ichan, len(data))
                         continue
 
-
                     data_processed = data - np.nanmedian(data)
-                    #print(np.sum(rel_ra_masked), np.sum(rel_dec_masked),np.sum(data_processed),rms_data)
                     try:
                         p_gauss, e_gauss, best = fit_gaussian2d_with_errors(rel_ra_masked,rel_dec_masked, data_processed, sigma=rms_data)
-                    except np.linalg.LinAlgError:
+                    except np.linalg.LinAlgError as e:
+                        logging.warning('LinAlgError fitting feed %d band %d chan %d: %s',
+                                       feed, iband, ichan, e)
+                        continue
+
+                    if not self._validate_fit(p_gauss, e_gauss, feed, iband, ichan):
                         continue
 
                     self.best_fits[:,feed-1,iband,ichan] = p_gauss
-                    self.errs_fits[:,feed-1,iband,ichan] = e_gauss 
+                    self.errs_fits[:,feed-1,iband,ichan] = e_gauss
 
                     delta_az, delta_el = self.rotate_pa(p_gauss[1],p_gauss[2],np.radians(mean_pa))
                     delta_az_error, delta_el_error = self.rotate_pa_error(e_gauss[1],e_gauss[2],np.radians(mean_pa))
-                    self.delta_az[0,feed-1,iband,ichan] = delta_az 
+                    self.delta_az[0,feed-1,iband,ichan] = delta_az
                     self.delta_el[0,feed-1,iband,ichan] = delta_el
-                    self.delta_az[1,feed-1,iband,ichan] = delta_az_error 
+                    self.delta_az[1,feed-1,iband,ichan] = delta_az_error
                     self.delta_el[1,feed-1,iband,ichan] = delta_el_error
 
-                    residual = data_processed-best(rel_ra_masked, rel_dec_masked) 
+                    residual = data_processed-best(rel_ra_masked, rel_dec_masked)
                     mask_close = (rel_ra_masked**2 + rel_dec_masked**2) < (4.5/60./2.355)**2
                     chi2 = np.sum((residual[mask_close])**2/rms_data**2)/(np.sum(mask_close)-self.nparameters)
                     self.chi2_fits[feed-1,iband,ichan] = chi2
-                
+
 
     def make_diagnostic_plots(self, file_info, feed, band, chan,
                               out_prefix="calfit_debug"):
@@ -381,7 +420,7 @@ class CalibratorFitting(BaseCOMAPModule):
         mask &= np.isfinite(tod)
 
         if np.sum(mask) < 10:
-            print("Not enough data points for diagnostic plot.")
+            logging.warning("Not enough data points for diagnostic plot.")
             return
 
         rel_ra = rel_ra[mask]
@@ -444,14 +483,12 @@ class CalibratorFitting(BaseCOMAPModule):
         outfile = f"{out_prefix}_obs{file_info.obsid}_f{feed+1}_b{band}_c{chan}.png"
         fig.savefig(outfile, dpi=200)
         pyplot.close(fig)
-        print("Saved", outfile)
+        logging.info("Saved diagnostic plot: %s", outfile)
 
 
     def run(self, file_info : COMAPData) -> None:
         """ """
-        #if  file_info.source  == 'jupiter':
         logging.info(f'Calibrator fitting for {file_info.source}')
-        #    return 
         if not file_info.source_group == 'Calibrator':
             return
 
@@ -473,7 +510,7 @@ if __name__ == '__main__':
                         help="One or more obsids to process")
     parser.add_argument("--overwrite", action="store_true",
                         help="Overwrite existing calibrator_fit group")
-    parser.add_argument("--plot", action="store_false",
+    parser.add_argument("--plot", action="store_true",
                         help="Make diagnostic plots")
     parser.add_argument("--chi2_max", type=float, default=None,
                         help="Flag fits with chi2_red > chi2_max")
@@ -492,7 +529,7 @@ if __name__ == '__main__':
     filelist = db.query_obsid_list(args.obsid, return_list=True, return_dict=False)
 
     for file_info in filelist:
-        print(f"Processing obsid {file_info.obsid}")
+        logging.info(f"Processing obsid {file_info.obsid}")
         calibrator_fitting = CalibratorFitting(overwrite=args.overwrite)
         calibrator_fitting.run(file_info)
 
