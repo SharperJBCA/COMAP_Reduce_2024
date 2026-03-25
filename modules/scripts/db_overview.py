@@ -54,7 +54,7 @@ def cmd_summary(show_examples: int) -> None:
 
     db._disconnect()
 
-def cmd_field_status(field_name: str, exact: bool = False) -> None:
+def cmd_field_status(field_name: str, exact: bool = False, include_skydips: bool = False) -> None:
     """Summarize how many observations exist for a field and how many are processed."""
     db._connect()
 
@@ -62,6 +62,9 @@ def cmd_field_status(field_name: str, exact: bool = False) -> None:
         base_query = db.session.query(COMAPData.obsid).filter(COMAPData.source == field_name)
     else:
         base_query = db.session.query(COMAPData.obsid).filter(COMAPData.source.ilike(f"%{field_name}%"))
+
+    if not include_skydips:
+        base_query = base_query.filter(COMAPData.source_group != "SkyDip")
 
     total = base_query.count()
     processed = (
@@ -72,13 +75,15 @@ def cmd_field_status(field_name: str, exact: bool = False) -> None:
 
     db._disconnect()
 
-    print(tabulate([
+    rows = [
         ["Field query", field_name],
         ["Match mode", "exact" if exact else "contains"],
+        ["Excluding SkyDips", "no" if include_skydips else "yes"],
         ["Total observations", total],
         ["Processed observations", processed],
         ["Unprocessed observations", total - processed],
-    ], headers=["Metric", "Value"], tablefmt="github"))
+    ]
+    print(tabulate(rows, headers=["Metric", "Value"], tablefmt="github"))
 
 
 def cmd_missing_level2(limit: int) -> None:
@@ -131,6 +136,7 @@ def main() -> None:
     field_status = subparsers.add_parser("field-status", help="Show observation/processed counts for a field name")
     field_status.add_argument("field_name", help="Field name to search in the source column")
     field_status.add_argument("--exact", action="store_true", help="Match source exactly instead of substring matching")
+    field_status.add_argument("--include-skydips", action="store_true", help="Include SkyDip observations in the count (excluded by default)")
 
     args = parser.parse_args()
 
@@ -143,7 +149,7 @@ def main() -> None:
     elif args.command == "path-search":
         cmd_path_search(args.substring, args.limit)
     elif args.command == "field-status":
-        cmd_field_status(args.field_name, args.exact)
+        cmd_field_status(args.field_name, exact=args.exact, include_skydips=args.include_skydips)
 
 
 if __name__ == "__main__":

@@ -95,6 +95,7 @@ class CreateLevel2File(BaseCOMAPModule):
             logging.error(f"File was corrupted, deleting: {file_info.level2_path}")
 
         if self.already_processed(file_info):
+            logging.info(f"Level-2 file already exists with spectrometer data, skipping creation: {file_info.level2_path}")
             return
 
         # Create the level 2 file
