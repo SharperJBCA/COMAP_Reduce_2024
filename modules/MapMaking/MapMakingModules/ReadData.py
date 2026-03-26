@@ -663,17 +663,21 @@ class Level2DataReader:
 
         # spike handling and residual filtering
         with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
-            # strong spikes where Planck is quiet
+            # Planck-quiet mask: only clip spikes where sky is faint
             if self.planck_30_map is not None:
                 hpx = hp.ang2pix(1024, np.radians(90.0 - gb), np.radians(gl))
-                quiet = self.planck_30_map[hpx] < self.planck_quiet_cut_strong
-                mspk = (np.abs(tod) > self.spike_sigma_strong * auto_rms) & quiet
-                tod[mspk] = 0.0
-                w_solver[mspk] = 0.0
+                planck_quiet = self.planck_30_map[hpx] < self.planck_quiet_cut_strong
+            else:
+                planck_quiet = np.ones(len(tod), dtype=bool)
 
-            # median residual spikes
+            # strong spikes (only where Planck is quiet)
+            mspk = (np.abs(tod) > self.spike_sigma_strong * auto_rms) & planck_quiet
+            tod[mspk] = 0.0
+            w_solver[mspk] = 0.0
+
+            # median residual spikes (only where Planck is quiet)
             resid = tod - np.array(medfilt.medfilt(tod.astype(np.float64), self.medfilt_len)).astype(np.float32)
-            mspk2 = np.abs(resid) > (self.spike_sigma_resid * auto_rms)
+            mspk2 = (np.abs(resid) > (self.spike_sigma_resid * auto_rms)) & planck_quiet
             if mspk2.any():
                 kernel = np.ones(self.resid_dilate, dtype=np.int8)
                 mspk2 = np.convolve(mspk2.astype(np.int8), kernel, mode="same") > 0
