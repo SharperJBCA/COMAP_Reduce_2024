@@ -51,6 +51,7 @@ class CreateMap:
         file_list_name: str = "file_list.txt",
         sigma_red_cutoff: float = 0.4,
         calib_path: str = None,
+        calib_source: str = None,
         planck_30_path: str = None,
         lambda_ridge: float = 1e-4,
         jackknife_odd_even: str = None,
@@ -66,6 +67,7 @@ class CreateMap:
         prior_smoothing_fwhm_deg: float = 0.5,
         use_planck_prior: bool = False,
         plot_convergence: bool = True,
+        use_scan_flags: bool = False,
         line_mode: bool = False,
         line_frequency: float = 31.22332,
         line_segment_width: int = 30,
@@ -114,6 +116,7 @@ class CreateMap:
             "lambda_ridge": lambda_ridge,
             "planck_30_path": planck_30_path,
             "calib_path": calib_path,
+            "calib_source": calib_source,
             "jackknife_odd_even": jackknife_odd_even,
             "split_mode": split_mode,
             "apply_pointing_correction": apply_pointing_correction,
@@ -123,6 +126,7 @@ class CreateMap:
             "prior_smoothing_fwhm_deg": prior_smoothing_fwhm_deg,
             "use_planck_prior": use_planck_prior,
             "plot_convergence": plot_convergence,
+            "use_scan_flags": use_scan_flags,
             "created_utc": datetime.now(timezone.utc).isoformat(),
         }
         if self.line_mode:

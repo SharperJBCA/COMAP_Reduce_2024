@@ -31,10 +31,11 @@ def load_data(parameters):
 
     file_list = np.loadtxt(parameters['file_list'], dtype=str,ndmin=1)
     n_files = len(file_list)
-    logging.info('Number of files: %d', n_files)
     n_files_per_process = n_files // size
     rank_start = rank * n_files_per_process
     rank_end   = (rank + 1) * n_files_per_process if rank < size - 1 else n_files
+    logging.info('Total files: %d, this rank processes files %d-%d (%d files)',
+                 n_files, rank_start, rank_end - 1, rank_end - rank_start)
 
     if parameters['database'] is not None:
         db = SQLModule()
@@ -46,6 +47,7 @@ def load_data(parameters):
                                           offset_length=parameters['offset_length'],
                                           planck_30_path=parameters['planck_30_path'],
                                           calib_path=parameters['calib_path'],
+                                          calib_source=parameters.get('calib_source', None),
                                           sigma_red_cutoff=parameters['sigma_red_cutoff'],
                                           database=db,
                                           jackknife=parameters.get('jackknife_odd_even',None),
@@ -57,7 +59,7 @@ def load_data(parameters):
     local_data.setup_wcs(parameters['wcs_def'])
 
     if local_data.read_files([file_list[i] for i in range(rank_start, rank_end)],
-                             use_flags=False,
+                             use_flags=parameters.get('use_scan_flags', False),
                              feeds=parameters['feeds'],
                              apply_pointing_correction=parameters['apply_pointing_correction']):
         return local_data

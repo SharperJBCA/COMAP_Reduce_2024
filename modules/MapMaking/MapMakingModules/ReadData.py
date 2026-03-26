@@ -240,6 +240,7 @@ class Level2DataReader:
         planck_downweight: float = 0.1,         # factor applied to solver weights in bright Planck regions
         # Calibration
         calib_path: Optional[str] = None,       # TauA calibration .npy (dict-like)
+        calib_source: Optional[str] = None,     # "npy" or "db" (None defaults to "npy" if calib_path set)
         calib_min_factor: float = 0.3,
         # Coordinates
         input_coord: str = "C",
@@ -274,7 +275,15 @@ class Level2DataReader:
         self.planck_downweight = float(planck_downweight)
 
         # calibration
-        self.calib = np.load(calib_path, allow_pickle=True).item() if calib_path else None
+        self.calib_model_type = "legacy"  # default: sinusoidal .npy format
+        if calib_source == "db" and database is not None:
+            self.calib = database.load_calibration_model()
+            if self.calib is not None:
+                self.calib_model_type = self.calib.get("model_type", "polynomial")
+        elif calib_path:
+            self.calib = np.load(calib_path, allow_pickle=True).item() if calib_path else None
+        else:
+            self.calib = None
         self.calib_min_factor = float(calib_min_factor)
 
         # coords / wcs
@@ -374,8 +383,11 @@ class Level2DataReader:
             for feed in feeds:
                 if feed not in feeds_keep:
                     continue
-                flags = (np.ones(len(scan_edges), bool) if not use_flags or self.database is None
-                         else self.database.query_scan_flags(int(os.path.basename(file).split('-')[1]), feed, self.band))
+                if use_flags and self.database is not None:
+                    scan_flag_result = self.database.query_scan_flags(int(os.path.basename(file).split('-')[1]), feed, self.band)
+                    if scan_flag_result is False:
+                        continue  # all scans bad for this feed/band
+                flags = np.ones(len(scan_edges), bool)
                 for flag, (start, end) in zip(flags, scan_edges):
                     if not flag:
                         continue
@@ -426,11 +438,22 @@ class Level2DataReader:
     def _calibration_factor(self, feed: int, mjd0: float) -> Optional[float]:
         if self.calib is None:
             return 1.0
-        params = self.calib["model_fits"][feed - 1, self.band, self.channel]
-        phase = self.calib["best_phase"]
-        period = self.calib["best_period"]
-        amp, grad, off = params
-        val = amp * np.sin(2 * np.pi * (mjd0 - 59000.0 - phase) / period) + grad * (mjd0 - 59000.0) / 365.25 + off
+
+        if self.calib_model_type == "legacy":
+            # Legacy sinusoidal .npy format
+            params = self.calib["model_fits"][feed - 1, self.band, self.channel]
+            phase = self.calib["best_phase"]
+            period = self.calib["best_period"]
+            amp, grad, off = params
+            val = amp * np.sin(2 * np.pi * (mjd0 - 59000.0 - phase) / period) + grad * (mjd0 - 59000.0) / 365.25 + off
+        else:
+            # New model types: polynomial, nearest, mean
+            from modules.CalibrationModel.temporal_model import evaluate_model
+            element_params = self.calib["model_params"][feed - 1, self.band, self.channel]
+            if element_params is None:
+                return None
+            val = evaluate_model(mjd0, self.calib_model_type, element_params)
+
         if not np.isfinite(val) or val < self.calib_min_factor:
             return None
         return float(val)
@@ -575,8 +598,11 @@ class Level2DataReader:
 
                 if feed not in feeds_keep:
                     continue
-                flags = (np.ones(len(scan_edges), bool) if not use_flags or self.database is None
-                         else self.database.query_scan_flags(obsid, feed, self.band))
+                if use_flags and self.database is not None:
+                    scan_flag_result = self.database.query_scan_flags(obsid, feed, self.band)
+                    if scan_flag_result is False:
+                        continue  # all scans bad for this feed/band
+                flags = np.ones(len(scan_edges), bool)
                 good_scan_index = 0
                 for flag, (start, end) in zip(flags, scan_edges):
                     if not flag:

@@ -170,6 +170,51 @@ class QualityFlag(Base):
 #     return COMAPFeed 
     
 
+class CalibrationFlux(Base):
+    """Per-observation, per-feed/band/channel measured flux from calibrator fitting."""
+    __tablename__ = 'calibration_flux'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    obsid: Mapped[int] = mapped_column(sa.ForeignKey('comap_data.obsid'), nullable=False)
+    feed: Mapped[int] = mapped_column(nullable=False)       # 1-19
+    band: Mapped[int] = mapped_column(nullable=False)       # 0-3
+    channel: Mapped[int] = mapped_column(nullable=False)    # 0-1
+    mjd: Mapped[float] = mapped_column(nullable=False)
+    source: Mapped[str] = mapped_column(nullable=False)
+    measured_flux: Mapped[float | None] = mapped_column(nullable=True)  # Jy
+    flux_error: Mapped[float | None] = mapped_column(nullable=True)     # Jy
+    amplitude: Mapped[float | None] = mapped_column(nullable=True)      # K (peak)
+    chi2: Mapped[float | None] = mapped_column(nullable=True)
+
+    __table_args__ = (
+        sa.UniqueConstraint('obsid', 'feed', 'band', 'channel'),
+    )
+
+
+class CalibrationModelFit(Base):
+    """Fitted temporal calibration model parameters per feed/band/channel."""
+    __tablename__ = 'calibration_model_fit'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    feed: Mapped[int] = mapped_column(nullable=False)       # 1-19
+    band: Mapped[int] = mapped_column(nullable=False)       # 0-3
+    channel: Mapped[int] = mapped_column(nullable=False)    # 0-1
+    source: Mapped[str | None] = mapped_column(nullable=True)
+    model_type: Mapped[str | None] = mapped_column(nullable=True)  # "polynomial", "nearest", "mean"
+    # Polynomial coefficients as JSON: [c0, c1, ...], t = (mjd-59000)/365.25
+    poly_coeffs: Mapped[str | None] = mapped_column(nullable=True)
+    # For nearest-neighbor: JSON arrays of (mjd, gain) lookup
+    nearest_mjds: Mapped[str | None] = mapped_column(nullable=True)
+    nearest_gains: Mapped[str | None] = mapped_column(nullable=True)
+    fit_rms: Mapped[float | None] = mapped_column(nullable=True)
+    n_observations: Mapped[int | None] = mapped_column(nullable=True)
+    updated_at: Mapped[str | None] = mapped_column(nullable=True)
+
+    __table_args__ = (
+        sa.UniqueConstraint('feed', 'band', 'channel'),
+    )
+
+
 class SQLModule:
 
     def __init__(self) -> None:
@@ -561,23 +606,26 @@ class SQLModule:
         else:
             return {d.obsid: d for d in data}
     
-    def get_unprocessed_files(self, source_group=None, source=None, min_obsid=0, overwrite=False) -> list:
+    def get_files(self, source_group=None, source=None, min_obsid=0) -> list:
         """
-        Get a list of unprocessed files
+        Get all files matching the given source/source_group/min_obsid criteria.
         """
         self._connect()
         query = self.session.query(COMAPData)
         if source_group:
             query = query.filter_by(source_group=source_group)
         if source:
-            query = query.filter_by(source=source) #(and_(COMAPData.source.like(source)))
+            query = query.filter_by(source=source)
 
         query = query.filter(COMAPData.obsid >= min_obsid)
 
         a = query.all()
         self._disconnect()
         return a
-        #return query.filter_by(level2_path=None).all()
+
+    def get_unprocessed_files(self, source_group=None, source=None, min_obsid=0, overwrite=False) -> list:
+        """Backward-compatible wrapper for get_files."""
+        return self.get_files(source_group=source_group, source=source, min_obsid=min_obsid)
 
     def add_quality_flags(self, obsid: int, flags: list[tuple[int, int, bool, str | None]]) -> None:
         """
@@ -680,6 +728,26 @@ class SQLModule:
 
         self._disconnect()
         return snapshot
+
+    def query_scan_flags(self, obsid: int, pixel: int, frequency_band: int):
+        """Return per-scan quality flags for a given obsid/pixel/band.
+
+        Checks the observation-level is_good flag from the QualityFlag table.
+        Per-scan noise statistics are stored in HDF5, not SQL, so fine-grained
+        per-scan filtering is handled separately in ReadData._process_scan.
+
+        Returns:
+            None if the entry is good or does not exist (caller treats as all scans good).
+            False if the entry exists and is_good=False (caller treats as all scans bad).
+        """
+        self._connect()
+        flag = (self.session.query(QualityFlag)
+                .filter_by(obsid=obsid, pixel=pixel, frequency_band=frequency_band)
+                .first())
+        self._disconnect()
+        if flag is None or flag.is_good:
+            return None
+        return False
 
     def get_bad_data_points(self, obsid: int) -> list[tuple[int, int, str | None]]:
         """
@@ -833,4 +901,130 @@ class SQLModule:
             freq_band = stats.pop('frequency_band')
             self.update_quality_statistics(obsid, pixel, freq_band, stats)
 
-db = SQLModule() 
+    # ---------- Calibration flux (per-element, per-observation) ----------
+
+    def insert_calibration_flux(self, obsid: int, source: str, mjd: float,
+                                flux, flux_errors, amplitudes, chi2) -> None:
+        """Insert per-feed/band/channel flux measurements from calibrator fitting.
+
+        Args:
+            obsid: Observation ID
+            source: Calibrator source name (e.g. 'TauA')
+            mjd: Median MJD of the observation
+            flux: ndarray [19, 4, 2] — flux density in Jy
+            flux_errors: ndarray [19, 4, 2] — flux density errors in Jy
+            amplitudes: ndarray [19, 4, 2] — peak amplitude in K
+            chi2: ndarray [19, 4, 2] — reduced chi-squared
+        """
+        import numpy as np
+        self._connect()
+        nfeed, nband, nchan = flux.shape
+        rows = []
+        for ifeed in range(nfeed):
+            for iband in range(nband):
+                for ichan in range(nchan):
+                    fval = float(flux[ifeed, iband, ichan])
+                    if not np.isfinite(fval):
+                        continue
+                    rows.append(CalibrationFlux(
+                        obsid=obsid,
+                        feed=ifeed + 1,  # 1-indexed
+                        band=iband,
+                        channel=ichan,
+                        mjd=mjd,
+                        source=source,
+                        measured_flux=fval,
+                        flux_error=float(flux_errors[ifeed, iband, ichan]) if np.isfinite(flux_errors[ifeed, iband, ichan]) else None,
+                        amplitude=float(amplitudes[ifeed, iband, ichan]) if np.isfinite(amplitudes[ifeed, iband, ichan]) else None,
+                        chi2=float(chi2[ifeed, iband, ichan]) if np.isfinite(chi2[ifeed, iband, ichan]) else None,
+                    ))
+
+        # Upsert: delete existing rows for this obsid, then insert
+        self.session.query(CalibrationFlux).filter_by(obsid=obsid).delete()
+        self.session.add_all(rows)
+        self.session.commit()
+        self._disconnect()
+
+    def query_calibration_flux(self, source: str,
+                               min_obsid: int = 0,
+                               max_obsid: int = 1000000) -> list:
+        """Query per-element calibration flux measurements.
+
+        Returns list of CalibrationFlux ORM objects.
+        """
+        self._connect()
+        rows = (self.session.query(CalibrationFlux)
+                .filter(CalibrationFlux.source == source,
+                        CalibrationFlux.obsid >= min_obsid,
+                        CalibrationFlux.obsid <= max_obsid)
+                .order_by(CalibrationFlux.obsid)
+                .all())
+        # Detach from session before disconnect
+        result = list(rows)
+        self._disconnect()
+        return result
+
+    # ---------- Calibration model fit ----------
+
+    def upsert_calibration_model(self, feed: int, band: int, channel: int,
+                                 **kwargs) -> None:
+        """Insert or update a calibration model fit for one feed/band/channel."""
+        self._connect()
+        row = (self.session.query(CalibrationModelFit)
+               .filter_by(feed=feed, band=band, channel=channel)
+               .first())
+        if row is None:
+            row = CalibrationModelFit(feed=feed, band=band, channel=channel, **kwargs)
+            self.session.add(row)
+        else:
+            for key, value in kwargs.items():
+                if hasattr(row, key):
+                    setattr(row, key, value)
+        self.session.commit()
+        self._disconnect()
+
+    def load_calibration_model(self) -> dict:
+        """Load all calibration model fits from SQL and return a dict
+        suitable for ReadData consumption.
+
+        Returns dict with keys:
+            "model_type": str
+            "model_params": object array [19, 4, 2] of per-element param dicts
+        """
+        import numpy as np
+        import json
+        self._connect()
+        rows = self.session.query(CalibrationModelFit).all()
+        self._disconnect()
+
+        if not rows:
+            return None
+
+        model_type = rows[0].model_type or "polynomial"
+        model_params = np.empty((19, 4, 2), dtype=object)
+        # Initialize all to None
+        for i in range(19):
+            for j in range(4):
+                for k in range(2):
+                    model_params[i, j, k] = None
+
+        for row in rows:
+            ifeed = row.feed - 1  # convert to 0-indexed
+            params = {}
+            if model_type in ("polynomial", "mean"):
+                if row.poly_coeffs:
+                    params["coeffs"] = json.loads(row.poly_coeffs)
+                else:
+                    params["coeffs"] = [1.0]  # fallback: unity gain
+            elif model_type == "nearest":
+                if row.nearest_mjds and row.nearest_gains:
+                    params["mjds"] = np.array(json.loads(row.nearest_mjds))
+                    params["gains"] = np.array(json.loads(row.nearest_gains))
+            model_params[ifeed, row.band, row.channel] = params
+
+        return {
+            "model_type": model_type,
+            "model_params": model_params,
+        }
+
+db = SQLModule()
