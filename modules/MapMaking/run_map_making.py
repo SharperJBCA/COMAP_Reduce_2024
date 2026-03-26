@@ -45,6 +45,7 @@ def load_data(parameters):
     else:
         db = None
 
+    print('CREATING LOCAL DATA OBJECT')
     local_data = Level2DataReader(tod_dataset=parameters['tod_data_name'],
                                           offset_length=parameters['offset_length'],
                                           planck_30_path=parameters['planck_30_path'],
@@ -58,6 +59,7 @@ def load_data(parameters):
     db.disconnect()
     band, channel = np.unravel_index(parameters['band'], (4,2))
 
+    print('CREATING DYNAMIC WCS')
     if parameters['wcs_def'] == 'dynamic':
         feeds_keep = parameters['feeds'] if parameters['feeds'] else list(range(1, 20))
         local_data.setup_dynamic_wcs(
@@ -69,6 +71,7 @@ def load_data(parameters):
     else:
         local_data.setup_wcs(parameters['wcs_def'])
 
+    print('READING DATA INTO LOCAL DATA')
     if local_data.read_files([file_list[i] for i in range(rank_start, rank_end)],
                              use_flags=parameters.get('use_scan_flags', False),
                              feeds=parameters['feeds'],
@@ -335,10 +338,12 @@ def main():
     parser.add_argument('config_file', type=str, help='Path to the configuration file')
     args = parser.parse_args()
 
+    print('READING PARAMETERS')
     parameters = toml.load(args.config_file)
     setup_logging(parameters['log_file_name'], prefix_date=False)
     update_log_variable('Rank: {:02d}'.format(rank))
 
+    print('LOADING DATA')
     local_data = load_data(parameters)
 
     if local_data is None:
@@ -350,6 +355,7 @@ def main():
     sky_changes = []
     prev_sky = None
 
+    print('STARTING DESTRIPER')
     for k in range(n_iter):
         if rank == 0:
             logging.info("[destriper] outer iteration %d/%d", k + 1, n_iter)

@@ -8,9 +8,9 @@ pipeline = [
     #'modules.DataAcquisition.DataCheckRemote.DataCheckRemote()',
     #'modules.DataAcquisition.DataAcquisition.DataAcquisition()',
     #'modules.DataAcquisition.DataAssess.DataAssess()',
-    'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()',
+    #'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()',
     #'modules.MapMaking.MapMaking.LineMapMaking()',
-    #'modules.MapMaking.MapMaking.MapMaking()',
+    'modules.MapMaking.MapMaking.MapMaking()',
 ]
 
 [modules.MapMaking.MapMaking.LineMapMaking]

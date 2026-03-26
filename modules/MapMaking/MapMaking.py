@@ -29,6 +29,7 @@ def get_file_list(target_source_group=None, target_source=None, min_obs_id=7000,
             max_obsid=max_obs_id,
             return_dict=False,
         )
+        print(target_source_group, target_source, db.database)
 
     n_no_level2 = sum(1 for _, f in query_source_group_list.items() if f.level2_path is None)
     source_file_list = [f.level2_path for _, f in query_source_group_list.items() if f.level2_path is not None]
@@ -104,6 +105,7 @@ class MapMaking:
                     max_obs_id=max_obs_id,
                     obsid_list=obsid_list,
                 )
+                print(src, final_files)
             return final_files
 
         return file_list_func(
