@@ -16,9 +16,9 @@ pipeline = ['modules.ProcessLevel2.CreateLevel2File.CheckLevel1FileExists.CheckL
 
 force_run = true 
 
-nprocess = 4
+nprocess = 1
 
-source = 'Field016.86+00.00' 
+source = 'Field014.46+00.00' 
 #'Field%%%%%%%%%%%%' # Use Field15% for all Field150 to 159, for example. 
 #
 source_group = 'Galactic' #'Calibrator' #'Galactic' # 'Foreground'

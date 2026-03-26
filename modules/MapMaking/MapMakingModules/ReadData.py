@@ -269,7 +269,7 @@ class Level2DataReader:
 
         # planck
         with suppress(ValueError,KeyError):
-            self.planck_30_map = hp.read_map(planck_30_path, verbose=False) if planck_30_path else None
+            self.planck_30_map = hp.read_map(planck_30_path) if planck_30_path else None
         self.planck_quiet_cut_strong = float(planck_quiet_cut_strong)
         self.planck_quiet_cut_soft = float(planck_quiet_cut_soft)
         self.planck_downweight = float(planck_downweight)
@@ -409,6 +409,7 @@ class Level2DataReader:
                         lon_max_local = max(lon_max_local, float(np.max(lon[finite])))
                         lat_min_local = min(lat_min_local, float(np.min(lat[finite])))
                         lat_max_local = max(lat_max_local, float(np.max(lat[finite])))
+                        break
             except (OSError, KeyError):
                 continue
 
@@ -629,15 +630,19 @@ class Level2DataReader:
         # basic checks
         auto_rms = np.nanmedian(auto_rms_scan)
         if not np.isfinite(auto_rms) or auto_rms <= 0:
+            print('BAD RMS')
             return None
-        if auto_rms > self.auto_rms_cap:
-            return None
-        if np.nanmax(sigma_red_scan) > self.sigma_red_cutoff:
-            return None
+        # if auto_rms > self.auto_rms_cap:
+        #     print('AUTO RMS TOO HIGH')
+        #     return None
+        # if np.nanmax(sigma_red_scan) > self.sigma_red_cutoff:
+        #     print('RED NOISE TOO HIGH')
+        #     return None
 
         # calibration (optional)
         cf = self._calibration_factor(feed, float(f["spectrometer/MJD"][0]))
         if cf is None:
+            print('NO CALIBRATION FACTOR')
             return None
         tod /= cf
         auto_rms /= cf  # if the calibration scales the whole timestream, keep thresholds consistent
@@ -759,6 +764,7 @@ class Level2DataReader:
                 good_scan_index = 0
                 for flag, (start, end) in zip(flags, scan_edges):
                     if not flag:
+                        print('FLAGGED')
                         continue
 
                     group_is_even = (good_scan_index % 2 == 0)
@@ -767,10 +773,12 @@ class Level2DataReader:
 
                     # If jackknife requested, drop non-matching group early
                     if self.jackknife is not None and group != self.jackknife:
+                        print('NOT IN JACK KNIFE')
                         continue
 
                     out = self._process_scan(f,ifeed, feed, int(start), int(end), float(f["spectrometer/MJD"][0]), apply_pointing_correction)
                     if out is None:
+                        print('OUT IS NONE')
                         continue
 
 
@@ -801,6 +809,8 @@ class Level2DataReader:
                     # Bin to per-pixel maps using w_map 
                     bin_funcs.bin_tod_to_map(self.data.sum_map, self.data.weight_map, self.data.hits_map,
                                              tod, w_solver, p)
+
+                    print('SCAN:',np.sum(self.data.sum_map),np.sum(self.data.weight_map),np.sum(self.data.hits_map))
 
                     # ----- solver path: rhs + store arrays -----
                     rhs_scan = np.zeros(len(tod) // self.offset_length, np.float32)
