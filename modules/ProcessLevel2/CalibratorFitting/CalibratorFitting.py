@@ -202,6 +202,17 @@ class CalibratorFitting(BaseCOMAPModule):
             pointing_offset_dec=float(np.nanmedian(self.best_fits[2])),
         )
 
+        # Store per-element flux in CalibrationFlux table for calibration model fitting
+        db.insert_calibration_flux(
+            obsid=file_info.obsid,
+            source=file_info.source,
+            mjd=self.median_mjd,
+            flux=flux,
+            flux_errors=flux_errors,
+            amplitudes=self.best_fits[0],
+            chi2=self.chi2_fits,
+        )
+
     def get_flux_density(self, best_fits : np.ndarray) -> np.ndarray:
         """
         Get the flux density from the best fits
@@ -307,6 +318,7 @@ class CalibratorFitting(BaseCOMAPModule):
             # Calibrator observations have exactly one scan
             scan_start,scan_end = f['level2/scan_edges'][0,:]
             mjd = f['spectrometer/MJD'][scan_start:scan_end]
+            self.median_mjd = float(np.nanmedian(mjd))
             obsid = file_info.obsid
 
             if file_info.source.lower() == 'jupiter':

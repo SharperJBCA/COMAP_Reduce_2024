@@ -176,21 +176,22 @@ class Level2Pipeline:
         target_source_group = self.parameters['Master'].get('source_group', None)
         target_source = self.parameters['Master'].get('source', None)
 
-        # Get the list of files to be processed 
+        # Get the list of files matching source/source_group criteria
         if not self.target_obsid:
-            level1_filelist = db.get_unprocessed_files(source_group=target_source_group, source=target_source, min_obsid=self.MIN_OBSID, overwrite=True)
-        else: 
+            level1_filelist = db.get_files(source_group=target_source_group, source=target_source, min_obsid=self.MIN_OBSID)
+        else:
             if isinstance(self.target_obsid,str):
                 self.target_obsid = np.loadtxt(self.target_obsid, dtype=int).tolist()
             fileinfo = db.query_obsid_list(self.target_obsid, return_dict=False)#[obsid[0]]
-            level1_filelist = [fileinfo[obsid] for obsid, v in fileinfo.items()] 
+            level1_filelist = [fileinfo[obsid] for obsid, v in fileinfo.items()]
 
-        print(len(level1_filelist), 'files to process')
-        
+        print(f'{len(level1_filelist)} total files matching query')
+
         if self.parameters['Master']['force_run']:
             final_files = level1_filelist
         else:
             final_files = []
+            n_already_processed = 0
             for fileinfo in tqdm(level1_filelist, desc='Checking Level 2 Files for file list'):
                 try:
                     if fileinfo.level2_path is None: # Is the level 2 path in the database?
@@ -202,14 +203,16 @@ class Level2Pipeline:
                             with RetryH5PY(fileinfo.level2_path, 'r') as f:  # If the file exists, check if it has been processed
                                 if (not 'level2/binned_filtered_data' in f) or (self.parameters['modules']['ProcessLevel2']['GainFilterAndBin']['GainFilterAndBin']['GainFilterAndBin']['overwrite'] == True):
                                     final_files.append(fileinfo)
+                                else:
+                                    n_already_processed += 1
                 except BadCOMAPFile:
                     continue
-                        
-        print('TOTAL FILES', len(final_files), 'files to process')
+
+            print(f'{n_already_processed} already processed, skipping')
 
         print('-----')
         print('Processing Level 2 Files for: {} {}'.format(target_source_group, target_source))
-        print('Number of files to process:',len(final_files))
+        print(f'Number of files to process: {len(final_files)}')
         print('-----')
         print('ObsIDs to process:',[f.obsid for f in final_files])
         # Loop over the filelist and process each file
