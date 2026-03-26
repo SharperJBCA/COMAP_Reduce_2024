@@ -71,6 +71,8 @@ class CreateMap:
         line_mode: bool = False,
         line_frequency: float = 31.22332,
         line_segment_width: int = 30,
+        dynamic_wcs_cdelt: float = 0.0166666,
+        dynamic_wcs_padding: float = 0.5,
         **kwargs,
     ) -> None:
         logging.info("Initializing CreateMap")
@@ -127,6 +129,8 @@ class CreateMap:
             "use_planck_prior": use_planck_prior,
             "plot_convergence": plot_convergence,
             "use_scan_flags": use_scan_flags,
+            "dynamic_wcs_cdelt": dynamic_wcs_cdelt,
+            "dynamic_wcs_padding": dynamic_wcs_padding,
             "created_utc": datetime.now(timezone.utc).isoformat(),
         }
         if self.line_mode:

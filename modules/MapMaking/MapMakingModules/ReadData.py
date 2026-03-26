@@ -353,6 +353,155 @@ class Level2DataReader:
         # Reproject Planck prior to WCS grid for iterative destriping
         self._reproject_prior_to_wcs()
 
+    def _apply_wcs_header(self, header: Header):
+        """Apply a WCS header and initialise map arrays."""
+        self.header = header
+        self.wcs = WCS(header)
+        self._ny = int(header["NAXIS2"])
+        self._nx = int(header["NAXIS1"])
+        self._npix = self._nx * self._ny
+        self.data.sum_map = np.zeros(self._npix, np.float32)
+        self.data.weight_map = np.zeros(self._npix, np.float32)
+        self.data.hits_map = np.zeros(self._npix, np.float32)
+        self.data.sky_map = np.zeros(self._npix, np.float32)
+        self._reproject_prior_to_wcs()
+
+    def scan_coordinate_extents(
+        self,
+        files: Sequence[str],
+        feeds_keep: Sequence[int],
+        stride: int = 10,
+    ) -> Tuple[float, float, float, float]:
+        """Scan files for coordinate extents (lightweight, no TOD read).
+
+        Reads every *stride*-th pointing sample, converts to output
+        coordinates, and returns (lon_min, lon_max, lat_min, lat_max)
+        after an MPI allreduce across all ranks.
+        """
+        lon_min_local = np.inf
+        lon_max_local = -np.inf
+        lat_min_local = np.inf
+        lat_max_local = -np.inf
+
+        for file in files:
+            try:
+                with h5py.File(file, "r") as f:
+                    feeds = f["spectrometer/feeds"][:-1]
+                    n_time = f["spectrometer/MJD"].shape[0]
+                    idx = np.arange(0, n_time, stride)
+                    if len(idx) == 0:
+                        continue
+                    mjd = f["spectrometer/MJD"][idx]
+
+                    for ifeed, feed in enumerate(feeds):
+                        if feed not in feeds_keep:
+                            continue
+                        az = f["spectrometer/pixel_pointing/pixel_az"][ifeed, idx]
+                        el = f["spectrometer/pixel_pointing/pixel_el"][ifeed, idx]
+
+                        ra, dec = h2e_full(az, el, mjd, comap_longitude, comap_latitude)
+                        lon, lat = self._coordinate_transform(ra, dec)
+
+                        finite = np.isfinite(lon) & np.isfinite(lat)
+                        if not finite.any():
+                            continue
+                        lon_min_local = min(lon_min_local, float(np.min(lon[finite])))
+                        lon_max_local = max(lon_max_local, float(np.max(lon[finite])))
+                        lat_min_local = min(lat_min_local, float(np.min(lat[finite])))
+                        lat_max_local = max(lat_max_local, float(np.max(lat[finite])))
+            except (OSError, KeyError):
+                continue
+
+        # MPI allreduce to get global extents
+        lon_min = comm.allreduce(lon_min_local, op=MPI.MIN)
+        lon_max = comm.allreduce(lon_max_local, op=MPI.MAX)
+        lat_min = comm.allreduce(lat_min_local, op=MPI.MIN)
+        lat_max = comm.allreduce(lat_max_local, op=MPI.MAX)
+
+        return lon_min, lon_max, lat_min, lat_max
+
+    def setup_dynamic_wcs(
+        self,
+        files: Sequence[str],
+        feeds_keep: Sequence[int],
+        *,
+        cdelt: float = 0.0166666,
+        padding: float = 0.5,
+        ctype1: str = "GLON-CAR",
+        ctype2: str = "GLAT-CAR",
+    ):
+        """Build a WCS from the coordinate extents of the data.
+
+        Parameters
+        ----------
+        files : list of str
+            All Level-2 files (across all MPI ranks).
+        feeds_keep : list of int
+            Feed numbers to include in the extent scan.
+        cdelt : float
+            Pixel size in degrees (default 1 arcmin = 0.0166666).
+        padding : float
+            Extra border around data extents in degrees.
+        ctype1, ctype2 : str
+            WCS coordinate types (default Galactic plate carree).
+        """
+        self.wcs_def = "dynamic"
+
+        # Distribute extent scanning across MPI ranks
+        n_files = len(files)
+        n_per_rank = n_files // size
+        r_start = rank * n_per_rank
+        r_end = (rank + 1) * n_per_rank if rank < size - 1 else n_files
+        rank_files = files[r_start:r_end]
+
+        lon_min, lon_max, lat_min, lat_max = self.scan_coordinate_extents(
+            rank_files, feeds_keep
+        )
+
+        if not all(np.isfinite(v) for v in (lon_min, lon_max, lat_min, lat_max)):
+            raise RuntimeError("Dynamic WCS: no valid coordinates found in any file.")
+
+        # Add padding
+        lon_min -= padding
+        lon_max += padding
+        lat_min -= padding
+        lat_max += padding
+
+        # Build WCS header
+        crval1 = 0.5 * (lon_min + lon_max)
+        crval2 = 0.5 * (lat_min + lat_max)
+        nx = int(np.ceil((lon_max - lon_min) / cdelt))
+        ny = int(np.ceil((lat_max - lat_min) / cdelt))
+        # Ensure odd dimensions so CRPIX lands on a pixel centre
+        if nx % 2 == 0:
+            nx += 1
+        if ny % 2 == 0:
+            ny += 1
+        crpix1 = (nx + 1) / 2.0
+        crpix2 = (ny + 1) / 2.0
+
+        cfg = {
+            "NAXIS1": nx,
+            "NAXIS2": ny,
+            "CRPIX1": crpix1,
+            "CRPIX2": crpix2,
+            "CDELT1": -cdelt,
+            "CDELT2": cdelt,
+            "CTYPE1": ctype1,
+            "CTYPE2": ctype2,
+            "CRVAL1": crval1,
+            "CRVAL2": crval2,
+        }
+
+        if rank == 0:
+            logging.info(
+                "[reader] dynamic WCS: centre=(%.3f, %.3f) size=(%d x %d) "
+                "cdelt=%.6f padding=%.2f",
+                crval1, crval2, nx, ny, cdelt, padding,
+            )
+
+        self._apply_wcs_header(Header(cfg))
+
     def _reproject_prior_to_wcs(self):
         """Project HEALPix Planck map to the flat-sky WCS grid."""
         if self.planck_30_map is None:

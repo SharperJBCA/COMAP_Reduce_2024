@@ -156,20 +156,135 @@ class Level2LineDataReader_Nov2024:
             config = toml.load(f)
 
         header = Header(config[wcs_def])
+        self._apply_wcs_header_line(header, line_frequency, line_segment_width)
 
-        self.header = header 
-        self.wcs = WCS(header) 
+    def _apply_wcs_header_line(self, header, line_frequency, line_segment_width):
+        """Apply a 2D WCS header and add the frequency axis."""
+        self.header = header
+        self.wcs = WCS(header)
 
         self.header['NAXIS3'] = line_segment_width
         self.header['CTYPE3'] = 'FREQ'
         self.header['CRVAL3'] = line_frequency
-        self.header['CDELT3'] = 2./1024. 
+        self.header['CDELT3'] = 2./1024.
         self.header['CRPIX3'] = 1
 
         n_pixels = header['NAXIS1'] * header['NAXIS2']
         self.data_container.sum_map = np.zeros((line_segment_width, n_pixels), dtype=np.float32)
         self.data_container.weight_map = np.zeros((line_segment_width, n_pixels), dtype=np.float32)
         self.data_container.hits_map = np.zeros(n_pixels, dtype=np.float32)
+
+    def setup_dynamic_wcs(
+        self,
+        files,
+        feeds_keep,
+        line_frequency,
+        line_segment_width,
+        *,
+        cdelt=0.0166666,
+        padding=0.5,
+        ctype1="GLON-CAR",
+        ctype2="GLAT-CAR",
+    ):
+        """Build a WCS from coordinate extents of the data (line mode).
+
+        Parameters
+        ----------
+        files : list of (level1, level2) tuples
+            All file pairs.
+        feeds_keep : list of int
+            Feed numbers to include in the extent scan.
+        line_frequency, line_segment_width : float, int
+            Line parameters for the frequency axis.
+        cdelt : float
+            Pixel size in degrees (default 1 arcmin).
+        padding : float
+            Extra border around data extents in degrees.
+        ctype1, ctype2 : str
+            WCS coordinate types.
+        """
+        self.wcs_def = "dynamic"
+
+        lon_min_local = np.inf
+        lon_max_local = -np.inf
+        lat_min_local = np.inf
+        lat_max_local = -np.inf
+
+        stride = 10
+        for item in files:
+            level2_file = item[1] if isinstance(item, (list, tuple)) else item
+            try:
+                with h5py.File(level2_file, 'r') as f:
+                    feeds = f['spectrometer/feeds'][:-1]
+                    n_time = f['spectrometer/MJD'].shape[0]
+                    idx = np.arange(0, n_time, stride)
+                    if len(idx) == 0:
+                        continue
+                    mjd = f['spectrometer/MJD'][idx]
+
+                    for ifeed, feed in enumerate(feeds):
+                        if feed not in feeds_keep:
+                            continue
+                        az = f['spectrometer/pixel_pointing/pixel_az'][ifeed, idx]
+                        el = f['spectrometer/pixel_pointing/pixel_el'][ifeed, idx]
+                        ra, dec = h2e_full(az, el, mjd, comap_longitude, comap_latitude)
+                        lon, lat = self.coordinate_transform(ra, dec)
+
+                        finite = np.isfinite(lon) & np.isfinite(lat)
+                        if not finite.any():
+                            continue
+                        lon_min_local = min(lon_min_local, float(np.min(lon[finite])))
+                        lon_max_local = max(lon_max_local, float(np.max(lon[finite])))
+                        lat_min_local = min(lat_min_local, float(np.min(lat[finite])))
+                        lat_max_local = max(lat_max_local, float(np.max(lat[finite])))
+            except (OSError, KeyError):
+                continue
+
+        lon_min = comm.allreduce(lon_min_local, op=MPI.MIN)
+        lon_max = comm.allreduce(lon_max_local, op=MPI.MAX)
+        lat_min = comm.allreduce(lat_min_local, op=MPI.MIN)
+        lat_max = comm.allreduce(lat_max_local, op=MPI.MAX)
+
+        if not all(np.isfinite(v) for v in (lon_min, lon_max, lat_min, lat_max)):
+            raise RuntimeError("Dynamic WCS: no valid coordinates found in any file.")
+
+        lon_min -= padding
+        lon_max += padding
+        lat_min -= padding
+        lat_max += padding
+
+        crval1 = 0.5 * (lon_min + lon_max)
+        crval2 = 0.5 * (lat_min + lat_max)
+        nx = int(np.ceil((lon_max - lon_min) / cdelt))
+        ny = int(np.ceil((lat_max - lat_min) / cdelt))
+        if nx % 2 == 0:
+            nx += 1
+        if ny % 2 == 0:
+            ny += 1
+        crpix1 = (nx + 1) / 2.0
+        crpix2 = (ny + 1) / 2.0
+
+        cfg = {
+            "NAXIS1": nx,
+            "NAXIS2": ny,
+            "CRPIX1": crpix1,
+            "CRPIX2": crpix2,
+            "CDELT1": -cdelt,
+            "CDELT2": cdelt,
+            "CTYPE1": ctype1,
+            "CTYPE2": ctype2,
+            "CRVAL1": crval1,
+            "CRVAL2": crval2,
+        }
+
+        if rank == 0:
+            logging.info(
+                "[reader] dynamic WCS: centre=(%.3f, %.3f) size=(%d x %d) "
+                "cdelt=%.6f padding=%.2f",
+                crval1, crval2, nx, ny, cdelt, padding,
+            )
+
+        self._apply_wcs_header_line(Header(cfg), line_frequency, line_segment_width)
 
     def select_band(self, frequencies, line_frequency, line_segment_width):
         """Select band and channel indices covering line frequency."""

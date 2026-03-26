@@ -56,7 +56,16 @@ def load_data(parameters):
     db.disconnect()
     band, channel = np.unravel_index(parameters['band'], (4,2))
 
-    local_data.setup_wcs(parameters['wcs_def'])
+    if parameters['wcs_def'] == 'dynamic':
+        feeds_keep = parameters['feeds'] if parameters['feeds'] else list(range(1, 20))
+        local_data.setup_dynamic_wcs(
+            list(file_list),
+            feeds_keep,
+            cdelt=parameters.get('dynamic_wcs_cdelt', 0.0166666),
+            padding=parameters.get('dynamic_wcs_padding', 0.5),
+        )
+    else:
+        local_data.setup_wcs(parameters['wcs_def'])
 
     if local_data.read_files([file_list[i] for i in range(rank_start, rank_end)],
                              use_flags=parameters.get('use_scan_flags', False),
