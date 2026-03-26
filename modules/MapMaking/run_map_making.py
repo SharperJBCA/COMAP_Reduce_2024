@@ -22,6 +22,8 @@ from modules.pipeline_control.Pipeline import BadCOMAPFile, update_log_variable,
 
 from modules.SQLModule.SQLModule import SQLModule, COMAPData, QualityFlag
 
+logging.getLogger("healpy").setLevel(logging.WARNING)
+
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 size = comm.Get_size()
