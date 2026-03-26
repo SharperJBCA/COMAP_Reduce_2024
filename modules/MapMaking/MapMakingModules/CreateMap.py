@@ -196,7 +196,8 @@ class CreateMap:
         if result.returncode != 0:
             logging.error("Mapmaking command failed (%s): %s", label, result.stderr)
             raise RuntimeError(
-                f"Map-making job '{label}' failed with return code {result.returncode}."
+                f"Map-making job '{label}' failed with return code {result.returncode}.\n"
+                f"stderr:\n{result.stderr}"
             )
         logging.info("Mapmaking command finished (%s)", label)
 
@@ -275,7 +276,13 @@ class CreateMap:
 
     def run(self, file_list: list) -> None:
         logging.info("Running CreateMap")
+        if not file_list:
+            logging.warning("CreateMap: no files to process — skipping.")
+            return
         jobs = list(self._build_jobs(file_list))
         for job in jobs:
+            if not job.files:
+                logging.warning("Skipping job '%s': empty file list.", job.label)
+                continue
             config_file = self._write_job_files(job)
             self._run_mapmaking_job(config_file, len(job.files), job.label)
