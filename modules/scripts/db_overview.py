@@ -58,10 +58,16 @@ def cmd_field_status(field_name: str, exact: bool = False, include_skydips: bool
     """Summarize how many observations exist for a field and how many are processed."""
     db._connect()
 
-    if exact:
+    if '*' in field_name or '?' in field_name:
+        pattern = field_name.replace('*', '%').replace('?', '_')
+        base_query = db.session.query(COMAPData.obsid).filter(COMAPData.source.like(pattern))
+        match_mode = f"wildcard ({field_name})"
+    elif exact:
         base_query = db.session.query(COMAPData.obsid).filter(COMAPData.source == field_name)
+        match_mode = "exact"
     else:
-        base_query = db.session.query(COMAPData.obsid).filter(COMAPData.source.ilike(f"%{field_name}%"))
+        base_query = db.session.query(COMAPData.obsid).filter(COMAPData.source == field_name)
+        match_mode = "exact"
 
     if not include_skydips:
         base_query = base_query.filter(COMAPData.source_group != "SkyDip")
@@ -77,7 +83,7 @@ def cmd_field_status(field_name: str, exact: bool = False, include_skydips: bool
 
     rows = [
         ["Field query", field_name],
-        ["Match mode", "exact" if exact else "contains"],
+        ["Match mode", match_mode],
         ["Excluding SkyDips", "no" if include_skydips else "yes"],
         ["Total observations", total],
         ["Processed observations", processed],
@@ -134,8 +140,8 @@ def main() -> None:
     path_search.add_argument("--limit", type=int, default=200, help="Max rows to print (<=0 means no limit)")
 
     field_status = subparsers.add_parser("field-status", help="Show observation/processed counts for a field name")
-    field_status.add_argument("field_name", help="Field name to search in the source column")
-    field_status.add_argument("--exact", action="store_true", help="Match source exactly instead of substring matching")
+    field_status.add_argument("field_name", help="Field name to search in the source column. Supports wildcards: * (any chars), ? (single char)")
+    field_status.add_argument("--exact", action="store_true", help="(deprecated, now the default) Match source exactly")
     field_status.add_argument("--include-skydips", action="store_true", help="Include SkyDip observations in the count (excluded by default)")
 
     args = parser.parse_args()
