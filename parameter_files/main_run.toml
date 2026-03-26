@@ -7,8 +7,9 @@ sql_database = 'databases/COMAP_manchester.db'
 pipeline = [
     #'modules.DataAcquisition.DataCheckRemote.DataCheckRemote()',
     #'modules.DataAcquisition.DataAcquisition.DataAcquisition()',
-    'modules.DataAcquisition.DataAssess.DataAssess()',
-    #'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()',
+    #'modules.DataAcquisition.DataAssess.DataAssess()',
+    'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()',
+    #'modules.CalibrationModel.CalibrationModel.CalibrationModel()',
     #'modules.MapMaking.MapMaking.LineMapMaking()',
     #'modules.MapMaking.MapMaking.MapMaking()',
 ]
@@ -20,6 +21,18 @@ config_file = 'parameter_files/level2_line_mapmaking.toml'
 [modules.MapMaking.MapMaking.MapMaking]
 
 config_file = 'parameter_files/level2_mapmaking.toml'
+
+[modules.CalibrationModel.CalibrationModel.CalibrationModel]
+source = 'TauA'
+model_type = 'polynomial'  # "polynomial", "nearest", "mean"
+poly_degree = 2
+min_obsid = 7000
+output_npy_path = 'calibration/calibration_model.npy'
+chi2_max = 10.0
+gain_min = 0.3
+gain_max = 3.0
+min_observations = 10
+overwrite = false
 
 [modules.ProcessLevel2.ProcessLevel2.Level2Pipeline]
 

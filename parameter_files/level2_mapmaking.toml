@@ -215,6 +215,15 @@ plot_convergence = true
 # Path to pointing model parameters (optional, set to enable pointing corrections)
 #pointing_params_path = '/path/to/pointing_params.npy'
 
+# Calibration source: "npy" (load from calib_path file) or "db" (load from SQL CalibrationModelFit table)
+# When using "db", the CalibrationModel module must have been run first to populate the database.
+#calib_source = "npy"
+
+# Use scan-level quality flags from the database to filter scans before processing.
+# Observer flags (is_good per pixel/band) are always applied regardless of this setting.
+# This adds an additional check via query_scan_flags for per-scan filtering.
+use_scan_flags = false
+
 [modules.MapMaking.MapMakingModules.CreateMapDayNight.CreateMapDayNight]
 
 output_dir = '/scratch/nas_core2/sharper/COMAP/level2_data_2024/level2_maps/day_night'
