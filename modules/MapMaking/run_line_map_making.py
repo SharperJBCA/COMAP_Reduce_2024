@@ -39,8 +39,18 @@ def load_data(parameters):
 
     local_data = Level2LineDataReader_Nov2024(tod_data_name=parameters['tod_data_name'])
 
-
-    local_data.setup_wcs(parameters['wcs_def'], parameters['line_frequency'], parameters['line_segment_width'])
+    if parameters['wcs_def'] == 'dynamic':
+        feeds_keep = parameters['feeds'] if parameters['feeds'] else list(range(1, 20))
+        local_data.setup_dynamic_wcs(
+            list(file_list),
+            feeds_keep,
+            parameters['line_frequency'],
+            parameters['line_segment_width'],
+            cdelt=parameters.get('dynamic_wcs_cdelt', 0.0166666),
+            padding=parameters.get('dynamic_wcs_padding', 0.5),
+        )
+    else:
+        local_data.setup_wcs(parameters['wcs_def'], parameters['line_frequency'], parameters['line_segment_width'])
 
     if local_data.read_files([file_list[i] for i in range(rank_start, rank_end)],
                              database=db,
