@@ -4,8 +4,8 @@ log_file = 'logs/{}_main_run.log'
 
 sql_database = 'databases/COMAP_manchester.db'
 
-min_obsid = 7000#45200#
-max_obsid = 101430#30000#
+min_obsid = 7000#7000#45200#
+max_obsid = 100430#30000#
 #obsid_list = '/scratch/nas_cbassarc/sharper/work/COMAP/COMAP_Reduce_2024/notebooks/fg4_files.txt' #[45204, 45144, 45143, 45202, 45151]
 #source = 'fg4' #'TauA'
 #source_group = 'Foreground' #'Calibrator' # "Galactic"
@@ -158,8 +158,16 @@ pipeline_m31 = [
 ]
 
 pipeline = [
-#            'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], n_processes=4, band=0, wcs_def="M31", source="fg4", source_group="Foreground", map_name="comap_fg4_160226", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db")',
-           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=0, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_160226", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4)',
+#           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], n_processes=4, band=0, wcs_def="M31", source="fg4", source_group="Foreground", map_name="comap_fg4_160226", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db")',
+           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=0, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_og_pointing", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=False)',
+           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=0, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
+           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=1, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
+           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=2, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
+           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=3, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
+           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=4, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
+           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=5, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
+           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=6, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
+           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=7, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
 ]
 
 [modules.MapMaking.MapMakingModules.CreateLineMap.CreateLineMap]
@@ -239,3 +247,14 @@ output_dir = '/scratch/nas_core2/sharper/COMAP/level2_data_2024/level2_maps/epoc
 [modules.MapMaking.MapMakingModules.CreateMapSeasons.CreateMapSeasons]
 
 output_dir = '/scratch/nas_core2/sharper/COMAP/level2_data_2024/level2_maps/seasons'
+
+#       modified:   modules/MapMaking/MapMakingModules/CreateMap.py
+#       modified:   modules/MapMaking/MapMakingModules/ReadData.py
+#       modified:   modules/MapMaking/run_map_making.py
+#       modified:   modules/ProcessLevel2/CalibratorFitting/CalibratorFitting.py
+#       modified:   modules/parameter_files/parameter_files.py
+#       modified:   modules/scripts/build_galactic_mjd_map.py
+#       modified:   modules/scripts/plot_calibrator_flux_vs_date.py
+#       modified:   parameter_files/level2_mapmaking.toml
+#       modified:   parameter_files/level2_processing.toml
+#       modified:   parameter_files/main_run.toml

@@ -14,13 +14,13 @@ pipeline = ['modules.ProcessLevel2.CreateLevel2File.CheckLevel1FileExists.CheckL
             'modules.ProcessLevel2.NoiseStats.NoiseStats.NoiseStatsLevel2()',
             'modules.ProcessLevel2.CalibratorFitting.CalibratorFitting.CalibratorFitting()']
 
-force_run = false 
+force_run = true 
 
 nprocess = 4
 
-#source = 'fg4' #'Field%%%%%%%%%%%%' # Use Field15% for all Field150 to 159, for example. 
+#source = 'TauA' #'Field%%%%%%%%%%%%' # Use Field15% for all Field150 to 159, for example. 
 #
-source_group = 'Foreground' #'Calibrator' #'Galactic' # 'Foreground'
+source_group = 'Galactic' #'Calibrator' #'Galactic' # 'Foreground'
 
 # Either a list of obsids, or a path to a file 
 # If commented out the pipeline will use source and source_group to find all unprocessed

@@ -37,7 +37,7 @@ overwrite = false
 [modules.ProcessLevel2.ProcessLevel2.Level2Pipeline]
 
 config_file = 'parameter_files/level2_processing.toml'
-MIN_OBSID = 53000
+MIN_OBSID = 54000
 
 [modules.DataAcquisition.DataCheckRemote.DataCheckRemote]
 
