@@ -568,8 +568,12 @@ class SQLModule:
         else:
             query = self.session.query(COMAPData).filter(or_(COMAPData.source_group.like('Galactic'),COMAPData.source_group.like('Foreground'))) #filter_by(source_group=source_group)
         if source:
-            query = query.filter(and_(COMAPData.source.contains(source)))
-        
+            if '*' in source or '?' in source:
+                pattern = source.replace('*', '%').replace('?', '_')
+                query = query.filter(and_(COMAPData.source.like(pattern)))
+            else:
+                query = query.filter(and_(COMAPData.source == source))
+
         query = query.filter(COMAPData.obsid >= min_obsid)
         query = query.filter(COMAPData.obsid <= max_obsid)
 
@@ -594,7 +598,11 @@ class SQLModule:
         if source_group:
             query = query.filter_by(source_group=source_group)
         if source:
-            query = query.filter(and_(COMAPData.source.contains(source)))
+            if '*' in source or '?' in source:
+                pattern = source.replace('*', '%').replace('?', '_')
+                query = query.filter(and_(COMAPData.source.like(pattern)))
+            else:
+                query = query.filter(and_(COMAPData.source == source))
         query = query.filter(COMAPData.obsid >= min_obsid)
         data = query.all()
         self._disconnect()
