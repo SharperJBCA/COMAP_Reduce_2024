@@ -18,7 +18,8 @@ force_run = true
 
 nprocess = 4
 
-#source = 'TauA' #'Field%%%%%%%%%%%%' # Use Field15% for all Field150 to 159, for example. 
+source = 'Field016.86+00.00' 
+#'Field%%%%%%%%%%%%' # Use Field15% for all Field150 to 159, for example. 
 #
 source_group = 'Galactic' #'Calibrator' #'Galactic' # 'Foreground'
 

@@ -159,15 +159,15 @@ pipeline_m31 = [
 
 pipeline = [
 #           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], n_processes=4, band=0, wcs_def="M31", source="fg4", source_group="Foreground", map_name="comap_fg4_160226", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db")',
-           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=0, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_og_pointing", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=False)',
-           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=0, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
-           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=1, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
-           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=2, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
-           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=3, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
-           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=4, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
-           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=5, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
-           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=6, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
-           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=7, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
+#           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=0, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_og_pointing", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=False)',
+           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=0, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_240326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=False)',
+#           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=1, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=False)',
+#           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=2, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
+#           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=3, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
+#           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=4, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
+#           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=5, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
+#           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=6, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
+#           'modules.MapMaking.MapMakingModules.CreateMap.CreateMap(feeds=[1,2,3,4,5,6,7,8,10,11,12,13,14,15,16,17,18,19], band=7, wcs_def="Galactic", source=["fg6","Field","fg12"], map_name="comap_galactic_050326_new_pointing_v1", tod_data_name="level2/binned_filtered_data", database_file="databases/COMAP_manchester.db", n_processes=4, apply_pointing_correction=True)',
 ]
 
 [modules.MapMaking.MapMakingModules.CreateLineMap.CreateLineMap]
@@ -190,7 +190,7 @@ wcs_def_file = 'parameter_files/wcs_definitions.toml'
 calib_path = '/scratch/nas_cbassarc/sharper/work/COMAP/COMAP_Reduce_2024/notebooks/source_fitting/TauA_best_fits.npy'
 lambda_ridge = 1e-2
 planck_30_path = '/scratch/nas_cbassarc/sharper/work/CBASS_PolarisedTF/ancillary_data/planck_pr3/LFI_SkyMap_030-BPassCorrected_1024_R3.00_full.fits'
-
+pointing_params_path='/scratch/nas_comap1/sharper/student_pipeline_test/COMAP_Reduce_2024/notebooks/pointing_params.txt'
 offset_length = 100
 
 # Control feeds to be used using observer flags rather than this list.
@@ -203,7 +203,7 @@ n_destriper_iterations = 1
 # Planck prior: stabilizes large angular scales by replacing low spatial-frequency
 # modes in the sky estimate with Planck 30 GHz data between iterations.
 # The prior only guides the offset solution — the final map is purely COMAP data.
-use_planck_prior = false
+use_planck_prior = true
 # Mixing parameter: 0.0 = disabled, 1.0 = full Planck on large scales
 prior_mixing_alpha = 0.5
 # Smoothing FWHM (degrees) for scale separation between COMAP and Planck
