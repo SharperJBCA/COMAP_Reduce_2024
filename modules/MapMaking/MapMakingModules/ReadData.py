@@ -632,12 +632,12 @@ class Level2DataReader:
         if not np.isfinite(auto_rms) or auto_rms <= 0:
             print('BAD RMS')
             return None
-        # if auto_rms > self.auto_rms_cap:
-        #     print('AUTO RMS TOO HIGH')
-        #     return None
-        # if np.nanmax(sigma_red_scan) > self.sigma_red_cutoff:
-        #     print('RED NOISE TOO HIGH')
-        #     return None
+        if auto_rms > self.auto_rms_cap:
+            print('AUTO RMS TOO HIGH')
+            return None
+        if np.nanmax(sigma_red_scan) > self.sigma_red_cutoff:
+            print('RED NOISE TOO HIGH')
+            return None
 
         # calibration (optional)
         cf = self._calibration_factor(feed, float(f["spectrometer/MJD"][0]))
@@ -809,8 +809,6 @@ class Level2DataReader:
                     # Bin to per-pixel maps using w_map 
                     bin_funcs.bin_tod_to_map(self.data.sum_map, self.data.weight_map, self.data.hits_map,
                                              tod, w_solver, p)
-
-                    print('SCAN:',np.sum(self.data.sum_map),np.sum(self.data.weight_map),np.sum(self.data.hits_map))
 
                     # ----- solver path: rhs + store arrays -----
                     rhs_scan = np.zeros(len(tod) // self.offset_length, np.float32)

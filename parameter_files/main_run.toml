@@ -7,10 +7,10 @@ sql_database = 'databases/COMAP_manchester.db'
 pipeline = [
     #'modules.DataAcquisition.DataCheckRemote.DataCheckRemote()',
     #'modules.DataAcquisition.DataAcquisition.DataAcquisition()',
-    #'modules.DataAcquisition.DataAssess.DataAssess()',
-    #'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()',
+    'modules.DataAcquisition.DataAssess.DataAssess()',
+    'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()',
     #'modules.MapMaking.MapMaking.LineMapMaking()',
-    'modules.MapMaking.MapMaking.MapMaking()',
+    #'modules.MapMaking.MapMaking.MapMaking()',
 ]
 
 [modules.MapMaking.MapMaking.LineMapMaking]
@@ -36,7 +36,7 @@ overwrite = false
 [modules.ProcessLevel2.ProcessLevel2.Level2Pipeline]
 
 config_file = 'parameter_files/level2_processing.toml'
-MIN_OBSID = 14000
+MIN_OBSID = 57200
 
 [modules.DataAcquisition.DataCheckRemote.DataCheckRemote]
 

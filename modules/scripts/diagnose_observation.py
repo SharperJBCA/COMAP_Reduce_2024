@@ -189,10 +189,11 @@ def plot_tsys_gain_atmos(h5, feeds, scan_edges, output_dir, obsid):
     freq = None
     if "spectrometer/frequency" in h5:
         freq = h5["spectrometer/frequency"][:].reshape(-1)  # (NBANDS*NCHANNELS,)
+        if freq.size != 4*1024:
+            freq = np.arange(4*1024)
         sort_idx = np.argsort(freq)
 
-    for feed in feeds:
-        ifeed = feed - 1
+    for ifeed, feed in enumerate(feeds):
         fig = plt.figure(figsize=(16, 12))
         gs = GridSpec(3, 2, figure=fig, hspace=0.35, wspace=0.3)
         fig.suptitle(f"Obsid {obsid} — Feed {feed:02d} — Calibration diagnostics", y=0.98)
@@ -218,6 +219,7 @@ def plot_tsys_gain_atmos(h5, feeds, scan_edges, output_dir, obsid):
             ax.set_xlabel(x_label)
             ax.set_title("System Temperature")
             ax.legend(fontsize=7, ncol=4)
+            ax.set_yscale('log')
 
         # --- Row 0 right: Gain ---
         if has_gain:
@@ -317,8 +319,7 @@ def write_noise_csv(h5, feeds, scan_edges, output_dir, obsid):
     has_atmos = "level2/atmosphere/tau" in h5
     tau_data = h5["level2/atmosphere/tau"][...] if has_atmos else None  # (NFEEDS, NBANDS, NCHANNELS, n_scans)
 
-    for feed in feeds:
-        ifeed = feed - 1
+    for ifeed, feed in enumerate(feeds):
         for iband in range(NBANDS):
             for iscan, (s0, s1) in enumerate(scan_edges):
                 row = {
