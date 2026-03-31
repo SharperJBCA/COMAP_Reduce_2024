@@ -318,6 +318,131 @@ def plot_tsys_gain_atmos(h5, feeds, scan_edges, output_dir, obsid):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Stacked / folded TOD templates
+# ──────────────────────────────────────────────────────────────────────
+
+def fold_tod(data: np.ndarray, period_samples: int):
+    """Fold a 1-D TOD at a given period and return the mean stacked template.
+
+    Returns
+    -------
+    template : (period_samples,) array — mean folded profile
+    std      : (period_samples,) array — std per phase bin
+    n_folds  : int — number of complete folds averaged
+    """
+    n = len(data)
+    n_folds = n // period_samples
+    if n_folds < 2:
+        return None, None, 0
+    usable = n_folds * period_samples
+    folded = data[:usable].reshape(n_folds, period_samples)
+    template = np.nanmean(folded, axis=0)
+    std = np.nanstd(folded, axis=0) / np.sqrt(n_folds)
+    return template, std, n_folds
+
+
+def find_best_fold_period(data: np.ndarray, freq_lo: float, freq_hi: float,
+                          sample_rate: float = 50.0, n_trial: int = 200):
+    """Search for the folding period that maximises the stacked signal amplitude.
+
+    Tries integer periods corresponding to frequencies in [freq_lo, freq_hi].
+    Returns the best period in samples and the corresponding frequency.
+    """
+    period_lo = max(2, int(np.floor(sample_rate / freq_hi)))
+    period_hi = int(np.ceil(sample_rate / freq_lo))
+    periods = np.arange(period_lo, period_hi + 1, dtype=int)
+    if len(periods) == 0:
+        return None, None
+
+    best_power = -np.inf
+    best_period = periods[0]
+    for p in periods:
+        template, _, n_folds = fold_tod(data, p)
+        if template is None:
+            continue
+        # Use peak-to-peak of template as figure of merit
+        power = np.nanmax(template) - np.nanmin(template)
+        if power > best_power:
+            best_power = power
+            best_period = p
+
+    return int(best_period), sample_rate / best_period
+
+
+def plot_stacked_tod(h5, feeds, scan_edges, output_dir, obsid,
+                     stack_freq=None, freq_search_lo=2.0, freq_search_hi=6.0,
+                     sample_rate=50.0):
+    """Fold TOD at a periodic signal and plot the stacked template.
+
+    If stack_freq is given, fold at exactly that frequency.
+    Otherwise, search [freq_search_lo, freq_search_hi] for the period that
+    maximises the stacked amplitude.
+    """
+    dset_name = "level2/binned_filtered_data"
+    if dset_name not in h5:
+        print(f"  [skip] {dset_name} not found — cannot plot stacked TOD")
+        return
+
+    for feed in feeds:
+        data_full = h5[dset_name][feed - 1, ...]  # (NBANDS, nch, ntod)
+        n_bands = data_full.shape[0]
+        n_scans = len(scan_edges)
+
+        fig, axes = plt.subplots(n_scans, n_bands, figsize=(5 * n_bands, 3 * n_scans),
+                                 squeeze=False)
+        fig.suptitle(f"Obsid {obsid} — Feed {feed:02d} — Stacked TOD templates", y=1.0)
+
+        for iscan, (s0, s1) in enumerate(scan_edges):
+            for iband in range(n_bands):
+                ax = axes[iscan, iband]
+                trace = np.nanmean(data_full[iband, :, s0:s1], axis=0)
+
+                if np.all(np.isnan(trace)):
+                    ax.text(0.5, 0.5, "no data", transform=ax.transAxes, ha="center")
+                    continue
+
+                # Replace NaN with 0 for folding
+                trace = trace.copy()
+                trace[np.isnan(trace)] = 0.0
+
+                if stack_freq is not None:
+                    period = int(round(sample_rate / stack_freq))
+                    fold_freq = sample_rate / period
+                else:
+                    period, fold_freq = find_best_fold_period(
+                        trace, freq_search_lo, freq_search_hi, sample_rate
+                    )
+
+                if period is None:
+                    ax.text(0.5, 0.5, "no period found", transform=ax.transAxes, ha="center")
+                    continue
+
+                template, std, n_folds = fold_tod(trace, period)
+                if template is None:
+                    ax.text(0.5, 0.5, "scan too short", transform=ax.transAxes, ha="center")
+                    continue
+
+                phase = np.arange(period) / sample_rate * 1000  # ms
+                ax.plot(phase, template, color="C0", lw=1.5)
+                ax.fill_between(phase, template - std, template + std,
+                                color="C0", alpha=0.2)
+                ax.axhline(0, color="gray", ls=":", lw=0.5)
+                ax.set_title(
+                    f"Band {iband} | f={fold_freq:.2f} Hz, P={period} samp, N={n_folds}",
+                    fontsize=8,
+                )
+
+                if iband == 0:
+                    ax.set_ylabel(f"Scan {iscan}\nT [K]", fontsize=9)
+
+        for ax in axes[-1, :]:
+            ax.set_xlabel("Phase [ms]")
+        fig.tight_layout()
+        fig.savefig(os.path.join(output_dir, f"{obsid}_feed{feed:02d}_stacked_tod.png"), dpi=120)
+        plt.close(fig)
+
+
+# ──────────────────────────────────────────────────────────────────────
 # CSV summary
 # ──────────────────────────────────────────────────────────────────────
 
@@ -443,6 +568,13 @@ def main():
                         help="Output directory (default: outputs/diagnostics/<obsid>)")
     parser.add_argument("--feeds", type=int, nargs="+", default=None,
                         help="Specific feeds to plot (default: all science feeds)")
+    parser.add_argument("--stack-freq", type=float, default=None,
+                        help="Fold TOD at this frequency in Hz (e.g. 3.5). "
+                             "If omitted, searches 2-6 Hz for the best period.")
+    parser.add_argument("--stack-freq-lo", type=float, default=2.0,
+                        help="Lower bound of frequency search range in Hz (default: 2.0)")
+    parser.add_argument("--stack-freq-hi", type=float, default=6.0,
+                        help="Upper bound of frequency search range in Hz (default: 6.0)")
     args = parser.parse_args()
 
     level2_path, obsid = resolve_file(args)
@@ -474,6 +606,12 @@ def main():
 
         print("  Plotting Tsys / Gain / Atmosphere...")
         plot_tsys_gain_atmos(h5, feeds, scan_edges, output_dir, obsid)
+
+        print("  Plotting stacked TOD templates...")
+        plot_stacked_tod(h5, feeds, scan_edges, output_dir, obsid,
+                         stack_freq=args.stack_freq,
+                         freq_search_lo=args.stack_freq_lo,
+                         freq_search_hi=args.stack_freq_hi)
 
         print("  Writing noise summary CSV...")
         write_noise_csv(h5, feeds, scan_edges, output_dir, obsid)
