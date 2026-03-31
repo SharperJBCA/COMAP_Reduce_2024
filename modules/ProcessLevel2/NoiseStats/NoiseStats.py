@@ -148,7 +148,9 @@ class NoiseStatsLevel2(BaseCOMAPModule):
     def __init__(self, plot=False, output_dir='outputs/NoiseStatsLevel2',
                  n_channels=2, output_group_name='level2_noise_stats',
                  target_tod_datasets=['level2/binned_filtered_data'],
-                 overwrite=False) -> None:
+                 overwrite=False,
+                 planck_30_path=None,
+                 planck_bright_cut=0.04) -> None:
         super().__init__()
         self.n_channels = n_channels
         self.NFEEDS = NFEEDS
@@ -158,6 +160,12 @@ class NoiseStatsLevel2(BaseCOMAPModule):
         self.plot = plot
         self.output_dir = output_dir
         self.overwrite = overwrite
+        self.planck_bright_cut = planck_bright_cut
+        if planck_30_path:
+            import healpy as hp
+            self.planck_30_map = hp.read_map(planck_30_path, verbose=False)
+        else:
+            self.planck_30_map = None
         os.makedirs(self.output_dir, exist_ok=True)
 
     def get_nchannels(self, file_info : COMAPData) -> int:
@@ -337,6 +345,29 @@ class NoiseStatsLevel2(BaseCOMAPModule):
         else:
             return result
 
+    def _build_bright_mask(self, f, ifeed, scan_start, scan_end):
+        """Return a boolean mask (True = bright source) for TOD samples in a scan.
+
+        Uses the Planck 30 GHz map to identify samples pointing at bright
+        regions that would corrupt the noise power-spectrum fit.
+        """
+        if self.planck_30_map is None:
+            return None
+
+        import healpy as hp
+        from modules.utils.Coordinates import h2e, e2g, comap_longitude, comap_latitude
+
+        az = f['spectrometer/pixel_pointing/pixel_az'][ifeed, scan_start:scan_end]
+        el = f['spectrometer/pixel_pointing/pixel_el'][ifeed, scan_start:scan_end]
+        mjd = f['spectrometer/MJD'][scan_start:scan_end]
+
+        ra, dec = h2e(az, el, mjd, comap_longitude, comap_latitude)
+        gl, gb = e2g(ra, dec)
+
+        nside = hp.npix2nside(len(self.planck_30_map))
+        hpx = hp.ang2pix(nside, np.radians(90.0 - gb), np.radians(gl))
+        return self.planck_30_map[hpx] >= self.planck_bright_cut
+
     def fit_statistics(self, file_info : COMAPData) -> dict:
         """Fit 1/f noise model per feed/band/channel/scan."""
 
@@ -357,6 +388,12 @@ class NoiseStatsLevel2(BaseCOMAPModule):
                         continue
 
                     feed_data = f[target_tod_dataset][feed-1, ...]
+
+                    # Precompute bright-source mask per scan for this feed
+                    bright_masks = {}
+                    for iscan, (scan_start, scan_end) in enumerate(scan_edges):
+                        bright_masks[iscan] = self._build_bright_mask(f, ifeed, scan_start, scan_end)
+
                     indices = itertools.product(
                         range(self.n_channels),
                         range(self.NBANDS),
@@ -364,10 +401,24 @@ class NoiseStatsLevel2(BaseCOMAPModule):
                     )
 
                     for ichannel, iband, (iscan, (scan_start, scan_end)) in tqdm(indices, total=self.n_channels*n_scans*self.NBANDS, desc=f'Feed {feed:02d}'):
-                        data = feed_data[iband, ichannel, scan_start:scan_end]
+                        data = feed_data[iband, ichannel, scan_start:scan_end].copy()
                         if np.all(np.isnan(data)):
                             logging.debug('Skipping feed %d band %d channel %d (all NaN)', feed, iband, ichannel)
                             continue
+
+                        # Mask bright-source samples by interpolating over them
+                        bright = bright_masks[iscan]
+                        if bright is not None and np.any(bright):
+                            good = ~bright & np.isfinite(data)
+                            if good.sum() > 2:
+                                data[bright] = np.interp(
+                                    np.where(bright)[0],
+                                    np.where(good)[0],
+                                    data[good],
+                                )
+                            else:
+                                continue  # almost all samples are bright — skip
+
                         auto_rms = self.auto_rms(data)
                         data_filtered = data - np.array(medfilt.medfilt(data.copy(), 50))
                         fill_in = (np.abs(data_filtered) < 3*auto_rms)
