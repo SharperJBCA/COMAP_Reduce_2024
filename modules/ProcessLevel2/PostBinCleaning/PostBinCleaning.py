@@ -30,12 +30,14 @@ class PostBinCleaning(BaseCOMAPModule):
         medfilt_length: int = 50,
         overwrite: bool = False,
         output_group: str = "level2/post_bin_cleaning",
+        outlier_sigma: float = 5.0,
     ) -> None:
         super().__init__()
         self.target_dataset = target_dataset
         self.medfilt_length = medfilt_length
         self.overwrite = overwrite
         self.output_group = output_group
+        self.outlier_sigma = outlier_sigma
 
     # ------------------------------------------------------------------ fit
     @staticmethod
@@ -74,6 +76,12 @@ class PostBinCleaning(BaseCOMAPModule):
         return model
 
     # -------------------------------------------------------------- process
+    @staticmethod
+    def _auto_rms(data: np.ndarray) -> float:
+        """Differenced RMS estimator (insensitive to slow drifts)."""
+        N = len(data) // 2 * 2
+        return float(np.nanstd(data[:N:2] - data[1:N:2]) / np.sqrt(2))
+
     def _clean_feed(self, data, elevation, scan_edges):
         """Clean one feed's binned data in-place.
 
@@ -97,19 +105,38 @@ class PostBinCleaning(BaseCOMAPModule):
                     if np.all(np.isnan(seg)):
                         continue
 
-                    # 1) Atmosphere re-fit
-                    atm_model = self._fit_atmosphere_scan(seg, el_seg)
+                    # 1) Median filter to get a smooth baseline
+                    finite = np.isfinite(seg)
+                    if finite.sum() <= self.medfilt_length:
+                        continue
+                    seg_for_med = seg.copy()
+                    seg_for_med[~finite] = 0.0
+                    med = np.array(
+                        medfilt.medfilt(seg_for_med.astype(np.float64), self.medfilt_length)
+                    ).astype(seg.dtype)
+
+                    # 2) Flag outliers using residuals from the median filter
+                    resid = seg - med
+                    rms = self._auto_rms(resid[finite])
+                    if rms <= 0 or not np.isfinite(rms):
+                        continue
+                    outlier = np.abs(resid) > self.outlier_sigma * rms
+                    clean = finite & ~outlier
+
+                    # 3) Atmosphere re-fit on clean (non-outlier) data
+                    seg_for_atm = seg.copy()
+                    seg_for_atm[~clean] = np.nan
+                    atm_model = self._fit_atmosphere_scan(seg_for_atm, el_seg)
                     seg -= atm_model
 
-                    # 2) Median filter for residual slow drifts
-                    finite = np.isfinite(seg)
-                    if finite.sum() > self.medfilt_length:
-                        seg_clean = seg.copy()
-                        seg_clean[~finite] = 0.0
-                        med = np.array(
-                            medfilt.medfilt(seg_clean.astype(np.float64), self.medfilt_length)
-                        ).astype(seg.dtype)
-                        seg[finite] -= med[finite]
+                    # 4) Subtract median filter from atmosphere-corrected data
+                    #    Recompute median after atmosphere removal
+                    seg_for_med2 = seg.copy()
+                    seg_for_med2[~finite] = 0.0
+                    med2 = np.array(
+                        medfilt.medfilt(seg_for_med2.astype(np.float64), self.medfilt_length)
+                    ).astype(seg.dtype)
+                    seg[finite] -= med2[finite]
 
                     tod[scan_start:scan_end] = seg
 
