@@ -355,7 +355,7 @@ class NoiseStatsLevel2(BaseCOMAPModule):
             return None
 
         import healpy as hp
-        from modules.utils.Coordinates import h2e, e2g, comap_longitude, comap_latitude
+        from modules.utils.Coordinates_py import h2e, e2g, comap_longitude, comap_latitude
 
         az = f['spectrometer/pixel_pointing/pixel_az'][ifeed, scan_start:scan_end]
         el = f['spectrometer/pixel_pointing/pixel_el'][ifeed, scan_start:scan_end]
@@ -405,6 +405,7 @@ class NoiseStatsLevel2(BaseCOMAPModule):
                         if np.all(np.isnan(data)):
                             logging.debug('Skipping feed %d band %d channel %d (all NaN)', feed, iband, ichannel)
                             continue
+                        auto_rms = self.auto_rms(data)
 
                         # Mask bright-source samples by interpolating over them
                         bright = bright_masks[iscan]
@@ -415,11 +416,10 @@ class NoiseStatsLevel2(BaseCOMAPModule):
                                     np.where(bright)[0],
                                     np.where(good)[0],
                                     data[good],
-                                )
+                                ) + np.random.normal(size=int(bright.sum()), scale=auto_rms)
                             else:
                                 continue  # almost all samples are bright — skip
 
-                        auto_rms = self.auto_rms(data)
                         data_filtered = data - np.array(medfilt.medfilt(data.copy(), 50))
                         fill_in = (np.abs(data_filtered) < 3*auto_rms)
                         if (np.sum(fill_in)/data.size) < 0.98: # skip if more than 2% of data is bad

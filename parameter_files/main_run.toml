@@ -7,7 +7,7 @@ sql_database = 'databases/COMAP_manchester.db'
 pipeline = [
     #'modules.DataAcquisition.DataCheckRemote.DataCheckRemote()',
     #'modules.DataAcquisition.DataAcquisition.DataAcquisition()',
-    'modules.DataAcquisition.DataAssess.DataAssess()',
+    #'modules.DataAcquisition.DataAssess.DataAssess()',
     'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()',
     #'modules.MapMaking.MapMaking.LineMapMaking()',
     #'modules.MapMaking.MapMaking.MapMaking()',

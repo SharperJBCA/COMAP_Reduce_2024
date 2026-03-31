@@ -15,6 +15,8 @@ from modules.pipeline_control.Pipeline import BadCOMAPFile, update_log_variable,
 from modules.SQLModule.SQLModule import QualityFlag, FileFlag
 from datetime import datetime
 
+import healpy as hp 
+logging.getLogger("healpy").setLevel(logging.WARNING)
 
 
 def process_files(filelist: list, parameters: dict, rank: int, base_delay : float = 2 ) -> None:

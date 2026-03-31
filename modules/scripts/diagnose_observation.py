@@ -25,6 +25,8 @@ import itertools
 import os
 import sys
 from pathlib import Path
+import healpy as hp
+from modules.utils.Coordinates_py import h2e, e2g, comap_longitude, comap_latitude
 
 import matplotlib
 matplotlib.use("Agg")
@@ -42,6 +44,9 @@ import h5py
 GROUND_FEED = 20
 NBANDS = 4
 
+PLANCK_FILENAME = '/scratch/nas_cbassarc/sharper/work/CBASS_PolarisedTF/ancillary_data/planck_pr3/LFI_SkyMap_030-BPassCorrected_1024_R3.00_full.fits'
+PLANCK_CUTOFF = 0.07
+planck_30_map = hp.read_map(PLANCK_FILENAME)
 
 # ──────────────────────────────────────────────────────────────────────
 # Noise analysis helpers (mirroring NoiseStats module)
@@ -139,19 +144,37 @@ def plot_noise_spectra(h5, feeds, scan_edges, output_dir, obsid):
         return
 
     n_scans = len(scan_edges)
-    for feed in feeds:
-        data_full = h5[dset_name][feed - 1, ...]  # (NBANDS, nch, ntod)
+    for ifeed, feed in enumerate(feeds):
+        data_full = h5[dset_name][ifeed, ...]  # (NBANDS, nch, ntod)
         n_bands = data_full.shape[0]
-
+        arms = h5[f"level2_noise_stats/binned_filtered_data/auto_rms"][ifeed, ...]
         fig, axes = plt.subplots(n_scans, n_bands, figsize=(5 * n_bands, 3 * n_scans),
                                  squeeze=False, sharex=True)
         fig.suptitle(f"Obsid {obsid} — Feed {feed:02d} — Noise power spectra", y=1.0)
 
         for iscan, (s0, s1) in enumerate(scan_edges):
+
+            az = h5['spectrometer/pixel_pointing/pixel_az'][ifeed, s0:s1]
+            el = h5['spectrometer/pixel_pointing/pixel_el'][ifeed, s0:s1]
+            mjd = h5['spectrometer/MJD'][s0:s1]
+            ra, dec = h2e(az, el, mjd, comap_longitude, comap_latitude)
+            gl, gb = e2g(ra, dec)
+            nside = hp.npix2nside(len(planck_30_map))
+            hpx = hp.ang2pix(nside, np.radians(90.0 - gb), np.radians(gl))
+            bright = (planck_30_map[hpx] >= PLANCK_CUTOFF)
+
             for iband in range(n_bands):
                 ax = axes[iscan, iband]
                 # Average channels in this band for one summary spectrum
                 trace = np.nanmean(data_full[iband, :, s0:s1], axis=0)
+                good = ~bright & np.isfinite(trace)
+                if good.sum() > 2:
+                    trace[bright] = np.interp(
+                        np.where(bright)[0],
+                        np.where(good)[0],
+                        trace[good],
+                    ) + np.random.normal(size=int(bright.sum()), scale=arms[iband,0,iscan])
+
                 if np.all(np.isnan(trace)):
                     ax.text(0.5, 0.5, "no data", transform=ax.transAxes, ha="center")
                     continue
@@ -428,6 +451,7 @@ def main():
     output_dir = args.output_dir or f"outputs/diagnostics/{obsid}"
     os.makedirs(output_dir, exist_ok=True)
 
+    print('RUNNING', level2_path)
     with h5py.File(level2_path, "r") as h5:
         all_feeds = h5["spectrometer/feeds"][:]
         science_feeds = sorted([int(f) for f in all_feeds if f != GROUND_FEED])
