@@ -395,7 +395,7 @@ def plot_stacked_tod(h5, feeds, scan_edges, output_dir, obsid,
         for iscan, (s0, s1) in enumerate(scan_edges):
             for iband in range(n_bands):
                 ax = axes[iscan, iband]
-                trace = np.nanmean(data_full[iband, :, s0:s1], axis=0)
+                trace = np.nanmean(data_full[iband, 0:1, s0:s1], axis=0)
 
                 if np.all(np.isnan(trace)):
                     ax.text(0.5, 0.5, "no data", transform=ax.transAxes, ha="center")

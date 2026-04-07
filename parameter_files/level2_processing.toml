@@ -27,12 +27,12 @@ source_group = 'Galactic' #'Calibrator' #'Galactic' # 'Foreground'
 # Either a list of obsids, or a path to a file 
 # If commented out the pipeline will use source and source_group to find all unprocessed
 # files. 
-target_obsid = [57205]
+target_obsid = [48317,57205]
 #21600,21629,23121,23150,23298,23327,24005,23976,24035
 
 [modules.ProcessLevel2.PostBinCleaning.PostBinCleaning.PostBinCleaning]
 overwrite = true 
-medfilt_length=50
+medfilt_length=3000
 
 [modules.ProcessLevel2.CalibratorFitting.CalibratorFitting.CalibratorFitting]
 

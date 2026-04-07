@@ -635,9 +635,9 @@ class Level2DataReader:
         if auto_rms > self.auto_rms_cap:
             print('AUTO RMS TOO HIGH')
             return None
-        if np.nanmax(sigma_red_scan) > self.sigma_red_cutoff:
-            print('RED NOISE TOO HIGH')
-            return None
+        # if np.nanmax(sigma_red_scan) > self.sigma_red_cutoff:
+        #     print('RED NOISE TOO HIGH')
+        #     return None
 
         # calibration (optional)
         cf = self._calibration_factor(feed, float(f["spectrometer/MJD"][0]))
