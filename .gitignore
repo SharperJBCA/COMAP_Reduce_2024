@@ -41,6 +41,7 @@ file_query_info_data/
 jupiter_conjunction/
 *.txt
 modules/MapMaking/map_making_configs/config*.toml
+results/
 
 # ---- Temp / misc ----
 temp.py

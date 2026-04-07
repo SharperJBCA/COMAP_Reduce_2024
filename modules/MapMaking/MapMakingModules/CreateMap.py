@@ -49,6 +49,7 @@ class CreateMap:
         tod_data_name: str = "level2/binned_filtered_data",
         database_file: str = "databases/COMAP_manchester.db",
         file_list_name: str = "file_list.txt",
+        obsid_list_file: str = None,
         sigma_red_cutoff: float = 0.4,
         calib_path: str = None,
         calib_source: str = None,
@@ -68,6 +69,7 @@ class CreateMap:
         use_planck_prior: bool = False,
         plot_convergence: bool = True,
         use_scan_flags: bool = False,
+        write_mean_azel: bool = False,
         line_mode: bool = False,
         line_frequency: float = 31.22332,
         line_segment_width: int = 30,
@@ -84,6 +86,7 @@ class CreateMap:
                 log_file = handler.baseFilename
 
         self.file_list_name = file_list_name
+        self.obsid_list_file = obsid_list_file
         self.map_name = map_name
         self.tod_data_name = tod_data_name
         self.band = band
@@ -131,6 +134,7 @@ class CreateMap:
             "use_scan_flags": use_scan_flags,
             "dynamic_wcs_cdelt": dynamic_wcs_cdelt,
             "dynamic_wcs_padding": dynamic_wcs_padding,
+            "write_mean_azel": write_mean_azel,
             "created_utc": datetime.now(timezone.utc).isoformat(),
         }
         if self.line_mode:

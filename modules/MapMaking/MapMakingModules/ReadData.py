@@ -336,6 +336,12 @@ class Level2DataReader:
         else:
             self.pointing_params = None
 
+        # Az/El/MJD accumulators for optional FITS header output
+        self._az_sum = 0.0
+        self._el_sum = 0.0
+        self._mjd_sum = 0.0
+        self._azel_count = 0
+
     # ---------------- WCS ----------------
 
     def setup_wcs(self, wcs_def: str):
@@ -725,6 +731,14 @@ class Level2DataReader:
             # downweight *but do not zero* unless already spiky
             w_solver[bright] *= np.float32(self.planck_downweight)
 
+        # Accumulate az/el/mjd for optional FITS header
+        good = w_solver > 0
+        if good.any():
+            self._az_sum += float(np.sum(az[good]))
+            self._el_sum += float(np.sum(el[good]))
+            self._mjd_sum += float(np.sum(mjd[good]))
+            self._azel_count += int(np.sum(good))
+
         return tod, w_solver, gl, gb
 
     # ------------- accumulate one file -------------
@@ -850,6 +864,20 @@ class Level2DataReader:
         sum_map_all_inplace(self.data.sum_map)
         sum_map_all_inplace(self.data.weight_map)
         sum_map_all_inplace(self.data.hits_map)
+
+        # MPI reduce az/el/mjd accumulators
+        self._az_sum = comm.allreduce(self._az_sum, op=MPI.SUM)
+        self._el_sum = comm.allreduce(self._el_sum, op=MPI.SUM)
+        self._mjd_sum = comm.allreduce(self._mjd_sum, op=MPI.SUM)
+        self._azel_count = comm.allreduce(self._azel_count, op=MPI.SUM)
+        if self._azel_count > 0:
+            self.mean_az = self._az_sum / self._azel_count
+            self.mean_el = self._el_sum / self._azel_count
+            self.mean_mjd = self._mjd_sum / self._azel_count
+        else:
+            self.mean_az = None
+            self.mean_el = None
+            self.mean_mjd = None
 
         # sky_map for later Z subtraction
         m = self.data.weight_map > 0

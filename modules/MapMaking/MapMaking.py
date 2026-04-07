@@ -86,6 +86,12 @@ class MapMaking:
         return module_cls(**args), args
 
     def _resolve_files(self, module, min_obs_id, max_obs_id, obsid_list):
+        # Per-module obsid list file takes highest priority
+        module_obsid_file = getattr(module, "obsid_list_file", None)
+        if module_obsid_file is not None:
+            logging.info("Loading obsid list from file: %s", module_obsid_file)
+            obsid_list = np.loadtxt(module_obsid_file, dtype=int, ndmin=1).tolist()
+
         if obsid_list is not None:
             if isinstance(obsid_list, str):
                 obsid_list = np.loadtxt(obsid_list, dtype=int).tolist()

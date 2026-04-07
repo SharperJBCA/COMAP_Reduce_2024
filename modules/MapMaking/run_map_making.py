@@ -297,6 +297,16 @@ def create_maps(
         h["HIERARCH PIPE.NITER"]  = int(parameters.get("n_destriper_iterations", 1))
         h["HIERARCH PIPE.ALPHA"]  = float(parameters.get("prior_mixing_alpha", 0.0))
         h["HIERARCH PIPE.SMFWHM"] = float(parameters.get("prior_smoothing_fwhm_deg", 0.5))
+        # optional mean az/el/mjd
+        if parameters.get("write_mean_azel", False):
+            mean_az = getattr(local_data, "mean_az", None)
+            mean_el = getattr(local_data, "mean_el", None)
+            mean_mjd = getattr(local_data, "mean_mjd", None)
+            if mean_az is not None and mean_el is not None:
+                h["MEAN_AZ"]  = (round(float(mean_az), 6), "[deg] Mean azimuth of included samples")
+                h["MEAN_EL"]  = (round(float(mean_el), 6), "[deg] Mean elevation of included samples")
+            if mean_mjd is not None:
+                h["MEAN_MJD"] = (round(float(mean_mjd), 8), "[d] Mean MJD of included samples")
         # solver regularisation (Planck)
         h["HIERARCH REG.PLANCKCUT"]  = float(getattr(local_data, "planck_quiet_cut_soft", np.nan))
         h["HIERARCH REG.PLANCKDW"]   = float(getattr(local_data, "planck_downweight", np.nan))
