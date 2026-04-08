@@ -143,10 +143,16 @@ def h2e(az, el, mjd, lon, lat, degrees=True):
 def h2e_full(az, el, mjd, lon, lat, degrees=True, sample_rate=50):
     """Full apparent transform using Astropy (already accounts for nut/prec/aberr.)."""
 
-    ra,dec= h2e(az[::sample_rate], el[::sample_rate], mjd[::sample_rate], lon, lat, degrees=degrees)
-    ra = np.interp(mjd,mjd[::sample_rate],ra)
-    dec = np.interp(mjd,mjd[::sample_rate],dec) 
-    return ra, dec 
+    ra_sub, dec = h2e(az[::sample_rate], el[::sample_rate], mjd[::sample_rate], lon, lat, degrees=degrees)
+    mjd_sub = mjd[::sample_rate]
+
+    # Unwrap RA before interpolation to handle the 0/360 boundary,
+    # then re-wrap to [0, 360) afterwards.
+    period = 360.0 if degrees else 2.0 * np.pi
+    ra_unwrap = np.unwrap(ra_sub, period=period)
+    ra = np.mod(np.interp(mjd, mjd_sub, ra_unwrap), period)
+    dec = np.interp(mjd, mjd_sub, dec)
+    return ra, dec
 
 def e2h(ra, dec, mjd, lon, lat, degrees=True, return_lha=False):
     """Equatorial -> Horizon; optionally return Local Hour Angle (deg or rad)."""

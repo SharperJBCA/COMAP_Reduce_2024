@@ -4,10 +4,12 @@ match_hii_to_fields.py
 Match HII region fitted positions (Galactic coordinates from
 ancillary_data/HII_region_fitted_positions.csv) to the nearest COMAP
 field centre (celestial coordinates from data/field_centers.csv), then
-produce per-field, per-epoch obsid lists from the database.
+produce per-field, per-LST-group obsid lists from the database.
 
-An epoch is a run of observations for a field where no consecutive pair
-is separated by more than --epoch-gap days (default 7).
+Observations are grouped by Local Sidereal Time (LST): observations
+whose LSTs fall within ±delta_lst of each other are placed in the same
+group. This ensures each group's observations share a common sky
+geometry, which is required for coherent destriped maps.
 
 Usage:
     python match_hii_to_fields.py
@@ -15,47 +17,86 @@ Usage:
                                   --fields data/field_centers.csv
                                   --db databases/COMAP_manchester.db
                                   --max-sep 2.0
-                                  --epoch-gap 7
+                                  --delta-lst 15.0
                                   --output-dir hii_field_tables/
 """
 
 import argparse
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 
+import numpy as np
 import pandas as pd
 import sqlalchemy as sa
-from astropy.coordinates import SkyCoord, Galactic, ICRS
+from astropy.coordinates import SkyCoord, Galactic, ICRS, EarthLocation
+from astropy.time import Time
 import astropy.units as u
 
 UTC_FMT = "%Y-%m-%d-%H:%M:%S"
+
+# COMAP observatory longitude (degrees East)
+COMAP_LON = -(118.0 + 16.0 / 60.0 + 56.0 / 3600.0)
 
 
 def parse_utc(s: str) -> datetime:
     return datetime.strptime(s, UTC_FMT)
 
 
-def assign_epochs(obs: pd.DataFrame, gap_days: float) -> pd.DataFrame:
-    """
-    Sort observations by date and assign an epoch number.
-    A new epoch starts whenever the gap to the previous observation
-    exceeds gap_days.
+def compute_lst_hours(utc_str: str) -> float:
+    """Compute the Local Sidereal Time (hours) for a UTC timestamp string."""
+    t = Time(datetime.strptime(utc_str, UTC_FMT), scale="utc")
+    lst = t.sidereal_time("apparent", longitude=COMAP_LON * u.deg)
+    return lst.hour
 
-    Expects obs to have a 'datetime' column (Python datetime objects).
-    Returns obs with an added 'epoch' column (1-based integer).
+
+def assign_lst_groups(obs: pd.DataFrame, delta_lst_min: float) -> pd.DataFrame:
     """
-    obs = obs.sort_values("datetime").copy()
-    epoch = 1
-    epochs = [epoch]
-    threshold = timedelta(days=gap_days)
-    prev_dt = obs["datetime"].iloc[0]
-    for dt in obs["datetime"].iloc[1:]:
-        if (dt - prev_dt) > threshold:
-            epoch += 1
-        epochs.append(epoch)
-        prev_dt = dt
-    obs["epoch"] = epochs
+    Group observations by LST proximity.
+
+    Observations whose LSTs are within ±delta_lst_min minutes of each
+    other are placed in the same group. The algorithm sorts by LST,
+    walks through finding gaps > 2*delta_lst, then checks whether
+    the first and last groups should merge (LST wraps at 24h).
+
+    Expects obs to have an 'lst_hours' column.
+    Returns obs with an added 'lst_group' column (1-based integer)
+    and 'lst_center' column (mean LST of the group, in hours).
+    """
+    delta_hours = delta_lst_min / 60.0
+    gap_threshold = 2.0 * delta_hours  # total window width
+
+    obs = obs.sort_values("lst_hours").copy()
+    lsts = obs["lst_hours"].values
+
+    group = 1
+    groups = [group]
+    for i in range(1, len(lsts)):
+        if (lsts[i] - lsts[i - 1]) > gap_threshold:
+            group += 1
+        groups.append(group)
+    obs["lst_group"] = groups
+
+    # Check if the first and last groups should merge across the 24h wrap
+    if group > 1:
+        wrap_gap = (lsts[0] + 24.0) - lsts[-1]
+        if wrap_gap <= gap_threshold:
+            # Merge: relabel the last group as group 1
+            last_group = group
+            obs.loc[obs["lst_group"] == last_group, "lst_group"] = 1
+            # Renumber remaining groups to be contiguous
+            unique_groups = sorted(obs["lst_group"].unique())
+            remap = {g: i + 1 for i, g in enumerate(unique_groups)}
+            obs["lst_group"] = obs["lst_group"].map(remap)
+
+    # Compute mean LST for each group (handle wrapping with np.unwrap)
+    centers = {}
+    for g in obs["lst_group"].unique():
+        g_lsts = obs.loc[obs["lst_group"] == g, "lst_hours"].values
+        unwrapped = np.unwrap(g_lsts, period=24.0)
+        centers[g] = np.mean(unwrapped) % 24.0
+    obs["lst_center"] = obs["lst_group"].map(centers)
+
     return obs
 
 
@@ -156,6 +197,7 @@ def query_observations(db_path: str, field_names: list[str]) -> pd.DataFrame:
         WHERE  LOWER(source) IN ({", ".join(f"lower('{f}')" for f in field_names)})
           AND  level2_path IS NOT NULL
           AND  level2_path != ''
+          AND  LOWER(COALESCE(source_group, '')) = 'galactic'
         ORDER  BY source, obsid
     """
     with engine.connect() as conn:
@@ -179,8 +221,8 @@ def parse_args():
         help="Maximum angular separation [deg] to accept a match (0 = no limit, default: 2.0).",
     )
     p.add_argument(
-        "--epoch-gap", type=float, default=7.0,
-        help="Gap in days that defines a new epoch (default: 7).",
+        "--delta-lst", type=float, default=15.0,
+        help="LST grouping half-window in minutes (default: 15.0, i.e. ±15 min).",
     )
     p.add_argument(
         "--output-dir", default="hii_field_tables",
@@ -256,8 +298,10 @@ def main():
         print("No observations with Level-2 files found for matched fields.")
         return
 
-    # ---- Parse dates and assign epochs ---------------------------------
+    # ---- Compute LST and assign groups ----------------------------------
     obs_df["datetime"] = obs_df["date"].apply(parse_utc)
+    print(f"\nComputing LST for {len(obs_df)} observations (COMAP lon={COMAP_LON:.4f} deg) ...")
+    obs_df["lst_hours"] = obs_df["date"].apply(compute_lst_hours)
     os.makedirs(args.output_dir, exist_ok=True)
 
     all_rows = []   # accumulates every row for the combined output
@@ -267,54 +311,58 @@ def main():
         if field_obs.empty:
             continue
 
-        field_obs = assign_epochs(field_obs, args.epoch_gap)
+        field_obs = assign_lst_groups(field_obs, args.delta_lst)
 
         hii_sources = matched.loc[
             matched["matched_field"].str.lower() == field.lower(),
             ["glon", "glat", "separation_deg"],
         ].reset_index(drop=True)
 
-        n_epochs = field_obs["epoch"].max()
-        print(f"\n  {field}: {len(field_obs)} obs, {n_epochs} epoch(s)")
+        n_groups = field_obs["lst_group"].max()
+        print(f"\n  {field}: {len(field_obs)} obs, {n_groups} LST group(s)")
         print(f"    HII source(s) matched:")
         for _, row in hii_sources.iterrows():
             print(f"      glon={row['glon']:.4f}  glat={row['glat']:.4f}  "
                   f"sep={row['separation_deg']:.3f} deg")
 
-        # --- per-field CSV (obsid, date, level2_path, epoch) ------------
+        # --- per-field CSV (obsid, date, level2_path, lst_group, lst_hours) --
         out_csv = os.path.join(args.output_dir, f"{field}_observations.csv")
         field_obs.drop(columns=["datetime"]).to_csv(out_csv, index=False)
         print(f"    CSV  → {out_csv}")
 
-        # --- per-field plain-text summary, one epoch per block -----------
-        out_txt = os.path.join(args.output_dir, f"{field}_obsids_by_epoch.txt")
+        # --- per-field plain-text summary, one LST group per block --------
+        out_txt = os.path.join(args.output_dir, f"{field}_obsids_by_lst_group.txt")
         with open(out_txt, "w") as fh:
             fh.write(f"# Field: {field}\n")
             for _, src in hii_sources.iterrows():
                 fh.write(f"# HII source: glon={src['glon']:.4f}  "
                          f"glat={src['glat']:.4f}  sep={src['separation_deg']:.3f} deg\n")
-            fh.write(f"# Epoch gap: {args.epoch_gap} days  |  {n_epochs} epoch(s)\n")
-            for ep in range(1, n_epochs + 1):
-                ep_obs = field_obs[field_obs["epoch"] == ep].sort_values("datetime")
-                start  = ep_obs["datetime"].iloc[0].strftime("%Y-%m-%d")
-                end    = ep_obs["datetime"].iloc[-1].strftime("%Y-%m-%d")
-                fh.write(f"\n[epoch {ep}]  {start} – {end}  ({len(ep_obs)} obs)\n")
-                for _, row in ep_obs.iterrows():
-                    fh.write(f"{row['obsid']}  {row['date']}  {row['level2_path']}\n")
-                print(f"      epoch {ep}: {start} – {end}  ({len(ep_obs)} obs)  "
-                      f"obsids: {ep_obs['obsid'].tolist()}")
+            fh.write(f"# LST grouping: ±{args.delta_lst:.1f} min  |  {n_groups} group(s)\n")
+            for grp in range(1, n_groups + 1):
+                grp_obs = field_obs[field_obs["lst_group"] == grp].sort_values("lst_hours")
+                lst_min = grp_obs["lst_hours"].min()
+                lst_max = grp_obs["lst_hours"].max()
+                lst_cen = grp_obs["lst_center"].iloc[0]
+                fh.write(f"\n[LST group {grp}]  LST {lst_min:.3f}h – {lst_max:.3f}h  "
+                         f"(centre {lst_cen:.3f}h, {len(grp_obs)} obs)\n")
+                for _, row in grp_obs.iterrows():
+                    fh.write(f"{row['obsid']}  {row['date']}  "
+                             f"LST={row['lst_hours']:.3f}h  {row['level2_path']}\n")
+                print(f"      LST group {grp}: LST {lst_min:.3f}h – {lst_max:.3f}h  "
+                      f"(centre {lst_cen:.3f}h, {len(grp_obs)} obs)  "
+                      f"obsids: {grp_obs['obsid'].tolist()}")
         print(f"    TXT  → {out_txt}")
 
-        # --- per-epoch obsid-only files (one obsid per line) -----------
-        epoch_dir = os.path.join(args.output_dir, "obsid_lists")
-        os.makedirs(epoch_dir, exist_ok=True)
-        for ep in range(1, n_epochs + 1):
-            ep_obs = field_obs[field_obs["epoch"] == ep].sort_values("datetime")
-            epoch_file = os.path.join(epoch_dir, f"{field}_epoch{ep:02d}.txt")
-            with open(epoch_file, "w") as fh:
-                for obsid in ep_obs["obsid"]:
+        # --- per-group obsid-only files (one obsid per line) -----------
+        group_dir = os.path.join(args.output_dir, "obsid_lists")
+        os.makedirs(group_dir, exist_ok=True)
+        for grp in range(1, n_groups + 1):
+            grp_obs = field_obs[field_obs["lst_group"] == grp].sort_values("lst_hours")
+            group_file = os.path.join(group_dir, f"{field}_lstgrp{grp:02d}.txt")
+            with open(group_file, "w") as fh:
+                for obsid in grp_obs["obsid"]:
                     fh.write(f"{obsid}\n")
-        print(f"    Obsid lists → {epoch_dir}/{field}_epoch*.txt")
+        print(f"    Obsid lists → {group_dir}/{field}_lstgrp*.txt")
 
         # accumulate for combined output
         field_obs["hii_glon"] = hii_sources["glon"].iloc[0]
@@ -322,13 +370,31 @@ def main():
         field_obs["separation_deg"] = hii_sources["separation_deg"].iloc[0]
         all_rows.append(field_obs)
 
-    # ---- Combined CSV (all fields, all epochs) -------------------------
+    # ---- Combined CSV (all fields, all groups) -------------------------
     if all_rows:
         combined = pd.concat(all_rows, ignore_index=True)
         combined = combined.drop(columns=["datetime"])
         combined_path = os.path.join(args.output_dir, "all_fields_observations.csv")
         combined.to_csv(combined_path, index=False)
         print(f"\nCombined table written to: {combined_path}")
+
+    # ---- LST metadata file (map_name → mean LST for fitting script) ---
+    if all_rows:
+        lst_rows = []
+        for field_df in all_rows:
+            if field_df.empty:
+                continue
+            field = field_df["field_name"].iloc[0]
+            for grp in field_df["lst_group"].unique():
+                lst_center = field_df.loc[
+                    field_df["lst_group"] == grp, "lst_center"
+                ].iloc[0]
+                map_name = f"hii_{field}_lstgrp{grp:02d}"
+                lst_rows.append({"map_name": map_name, "lst_center_hours": lst_center})
+        lst_meta = pd.DataFrame(lst_rows)
+        lst_meta_path = os.path.join(args.output_dir, "lst_metadata.csv")
+        lst_meta.to_csv(lst_meta_path, index=False)
+        print(f"LST metadata written to: {lst_meta_path}")
 
     # ---- Generate map-making TOML --------------------------------------
     toml_out = args.toml_out or os.path.join(args.output_dir, "hii_mapmaking.toml")
@@ -347,24 +413,23 @@ def generate_mapmaking_toml(
     args,
 ):
     """
-    Write a map-making TOML with one pipeline entry per field+epoch,
-    each pointing at the per-epoch obsid list file via obsid_list_file.
+    Write a map-making TOML with one pipeline entry per field+LST group,
+    each pointing at the per-group obsid list file via obsid_list_file.
     """
     feeds_str = f"[{args.feeds}]"
-    epoch_dir = os.path.join(args.output_dir, "obsid_lists")
+    group_dir = os.path.join(args.output_dir, "obsid_lists")
     # Use absolute paths so the TOML works from any working directory
-    abs_epoch_dir = os.path.abspath(epoch_dir)
+    abs_group_dir = os.path.abspath(group_dir)
 
     pipeline_entries = []
     for field_df in all_rows:
         if field_df.empty:
             continue
         field = field_df["field_name"].iloc[0]
-        n_epochs = field_df["epoch"].max()
-        for ep in range(1, n_epochs + 1):
-            ep_obs = field_df[field_df["epoch"] == ep]
-            obsid_file = os.path.join(abs_epoch_dir, f"{field}_epoch{ep:02d}.txt")
-            map_name = f"hii_{field}_epoch{ep:02d}"
+        n_groups = field_df["lst_group"].max()
+        for grp in range(1, n_groups + 1):
+            obsid_file = os.path.join(abs_group_dir, f"{field}_lstgrp{grp:02d}.txt")
+            map_name = f"hii_{field}_lstgrp{grp:02d}"
             entry = (
                 f'modules.MapMaking.MapMakingModules.CreateMap.CreateMap('
                 f'feeds={feeds_str}, '
