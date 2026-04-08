@@ -156,6 +156,7 @@ def query_observations(db_path: str, field_names: list[str]) -> pd.DataFrame:
         WHERE  LOWER(source) IN ({", ".join(f"lower('{f}')" for f in field_names)})
           AND  level2_path IS NOT NULL
           AND  level2_path != ''
+          AND  LOWER(COALESCE(source_group, '')) = 'galactic'
         ORDER  BY source, obsid
     """
     with engine.connect() as conn:

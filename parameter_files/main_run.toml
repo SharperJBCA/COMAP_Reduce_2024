@@ -5,21 +5,23 @@ log_file = 'logs/main_run.log'
 sql_database = 'databases/COMAP_manchester.db'
 
 pipeline = [
-    'modules.DataAcquisition.DataCheckRemote.DataCheckRemote()',
-    'modules.DataAcquisition.DataAcquisition.DataAcquisition()',
+    #'modules.DataAcquisition.DataCheckRemote.DataCheckRemote()',
+    #'modules.DataAcquisition.DataAcquisition.DataAcquisition()',
     #'modules.DataAcquisition.DataAssess.DataAssess()',
     #'modules.ProcessLevel2.ProcessLevel2.Level2Pipeline()',
     #'modules.MapMaking.MapMaking.LineMapMaking()',
-    #'modules.MapMaking.MapMaking.MapMaking()',
+    'modules.MapMaking.MapMaking.MapMaking()',
 ]
 
 [modules.MapMaking.MapMaking.LineMapMaking]
 
-config_file = 'parameter_files/level2_line_mapmaking.toml'
+config_file = 'hii_field_tables/hii_mapmaking.toml'
+#'parameter_files/level2_line_mapmaking.toml'
 
 [modules.MapMaking.MapMaking.MapMaking]
 
-config_file = 'parameter_files/level2_mapmaking.toml'
+config_file = 'hii_field_tables/hii_mapmaking.toml'
+#config_file = 'parameter_files/level2_mapmaking.toml'
 
 [modules.CalibrationModel.CalibrationModel.CalibrationModel]
 source = 'TauA'

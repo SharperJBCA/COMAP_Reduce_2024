@@ -234,7 +234,7 @@ class CreateMap:
         }
 
     def _build_jobs(self, file_list: Sequence[str]) -> Iterable[MapJob]:
-        feeds_str = "-".join([f"{i:02d}" for i in self.feeds])
+        feeds_str = "-".join([f"{int(i):02d}" for i in self.feeds])
 
         if self.split_mode == "none":
             yield MapJob(

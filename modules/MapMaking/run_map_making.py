@@ -61,7 +61,7 @@ def load_data(parameters):
 
     print('CREATING DYNAMIC WCS')
     if parameters['wcs_def'] == 'dynamic':
-        feeds_keep = parameters['feeds'] if parameters['feeds'] else list(range(1, 20))
+        feeds_keep = [int(f) for f in parameters['feeds']] if parameters['feeds'] else list(range(1, 20))
         local_data.setup_dynamic_wcs(
             list(file_list),
             feeds_keep,
@@ -72,13 +72,16 @@ def load_data(parameters):
         local_data.setup_wcs(parameters['wcs_def'])
 
     print('READING DATA INTO LOCAL DATA')
-    if local_data.read_files([file_list[i] for i in range(rank_start, rank_end)],
-                             use_flags=parameters.get('use_scan_flags', False),
-                             feeds=parameters['feeds'],
-                             apply_pointing_correction=parameters['apply_pointing_correction']):
-        return local_data
-    else:
-        return None
+    try: 
+        if local_data.read_files([file_list[i] for i in range(rank_start, rank_end)],
+                                use_flags=parameters.get('use_scan_flags', False),
+                                feeds=[int(f) for f in parameters['feeds']],
+                                apply_pointing_correction=parameters['apply_pointing_correction']):
+            return local_data
+        else:
+            return None
+    except RuntimeError:
+        return None 
 
 def run_destriper(local_data, parameters):
     """Run destriper on each process."""
