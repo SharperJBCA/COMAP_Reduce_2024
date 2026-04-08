@@ -389,7 +389,7 @@ class Level2DataReader:
         lat_min_local = np.inf
         lat_max_local = -np.inf
 
-        for file in files:
+        for file in tqdm(files,desc='Reading files for Dynamic WCS'):
             try:
                 with h5py.File(file, "r") as f:
                     feeds = f["spectrometer/feeds"][:-1]
@@ -417,6 +417,7 @@ class Level2DataReader:
                         lat_max_local = max(lat_max_local, float(np.max(lat[finite])))
                         break
             except (OSError, KeyError):
+                print('OSERROR/KEYERROR')
                 continue
 
         # MPI allreduce to get global extents
@@ -533,9 +534,12 @@ class Level2DataReader:
             scan_edges = f["level2/scan_edges"][...]
             feeds = f["spectrometer/feeds"][:-1]
             # early skip via feed 1 high sigma_red
-            s1 = f["level2_noise_stats/binned_filtered_data/sigma_red"][0, self.band, self.channel, :]
-            if np.any(s1 > 5.0):
-                return 0, 0
+            if not "level2_noise_stats/binned_filtered_data/sigma_red" in f:
+                logging.info(f'!!WARNING!!: {file} has no sigma red! Including without stat check!')
+            else:
+                s1 = f["level2_noise_stats/binned_filtered_data/sigma_red"][0, self.band, self.channel, :]
+                if np.any(s1 > 5.0):
+                    return 0, 0
             for feed in feeds:
                 if feed not in feeds_keep:
                     continue
@@ -558,7 +562,12 @@ class Level2DataReader:
         self._n_tod = 0
         self._n_off = 0
         for file in files:
-            ns, no = self._count_in_file(file, feeds_keep, use_flags)
+            try:
+                ns, no = self._count_in_file(file, feeds_keep, use_flags)
+            except (OSError,KeyError) as e:
+                print(f'Failed to process file: {file}')
+                logging.info(f'Failed to process file: {file}')
+                raise RuntimeError(e) 
             self._n_tod += ns
             self._n_off += no
         # per-sample arrays only for solver

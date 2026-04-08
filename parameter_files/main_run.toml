@@ -15,11 +15,13 @@ pipeline = [
 
 [modules.MapMaking.MapMaking.LineMapMaking]
 
-config_file = 'parameter_files/level2_line_mapmaking.toml'
+config_file = 'hii_field_tables/hii_mapmaking.toml'
+#'parameter_files/level2_line_mapmaking.toml'
 
 [modules.MapMaking.MapMaking.MapMaking]
 
-config_file = 'parameter_files/level2_mapmaking.toml'
+config_file = 'hii_field_tables/hii_mapmaking.toml'
+#config_file = 'parameter_files/level2_mapmaking.toml'
 
 [modules.CalibrationModel.CalibrationModel.CalibrationModel]
 source = 'TauA'
