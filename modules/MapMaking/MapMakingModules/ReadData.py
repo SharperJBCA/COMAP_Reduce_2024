@@ -678,6 +678,17 @@ class Level2DataReader:
             az = az - az_offset_deg
             el = el - el_offset_deg
 
+        # Validate pointing — skip scan if elevation is out of physical range
+        if not np.all(np.isfinite(el)) or np.nanmin(el) < 0.0 or np.nanmax(el) > 90.0:
+            fname = getattr(f, "filename", "<unknown>")
+            logging.warning(
+                f"[reader] SKIP scan: bad elevation in file={fname} "
+                f"feed={feed} ifeed={ifeed} start={start} end={end} "
+                f"el_range=[{np.nanmin(el)}, {np.nanmax(el)}] "
+                f"n_finite={int(np.sum(np.isfinite(el)))}/{el.size}"
+            )
+            return None
+
         ra, dec = h2e_full(az, el, mjd, comap_longitude, comap_latitude)
         gl, gb = self._coordinate_transform(ra, dec)
 

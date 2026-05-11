@@ -413,6 +413,8 @@ def plot_offsets_vs_azel(df: pd.DataFrame, plot_dir: str):
         ax.set_ylabel(ylabel)
         ax.legend(fontsize=8)
         ax.set_ylim(-2,2)
+        if 'Azimuth' in xlabel:
+            ax.set_xlim(0,360)
 
     fig.suptitle(
         f"Pointing offsets ({len(df)} fits)  |  "
@@ -465,13 +467,25 @@ def parse_args():
     p.add_argument(
         "--init-fwhm",
         type=float,
-        default=0.1,
+        default=4.5/60.,
         help="Initial FWHM guess in degrees (default: 0.1).",
     )
     p.add_argument(
         "--plot-dir",
         default="pointing_fit_plots",
         help="Directory for diagnostic plots (default: pointing_fit_plots/).",
+    )
+    p.add_argument(
+        "--hii",
+        default="ancillary_data/HII_region_fitted_positions.csv",
+        help="HII region fitted-positions CSV (default: ancillary_data/HII_region_fitted_positions.csv).",
+    )
+    p.add_argument(
+        "--survey",
+        default="Effe",
+        help="Survey whose coordinates to use as predicted source position "
+             "(default: Effe). Must match a lon_<survey>/lat_<survey> column pair "
+             "in the HII CSV, e.g. paladini, Effe, Park, CO26, comap_mean.",
     )
     return p.parse_args()
 
@@ -496,7 +510,38 @@ def main():
         log.info("Loaded LST metadata for %d maps from %s",
                  len(lst_lookup), args.lst_metadata)
 
-    # Build a lookup: field_name → list of (glon, glat) sources
+    # Load HII CSV and build lookup from CO26 coords to chosen survey coords
+    lon_col = f"lon_{args.survey} [deg]"
+    lat_col = f"lat_{args.survey} [deg]"
+    if not os.path.exists(args.hii):
+        sys.exit(f"ERROR: HII CSV not found: {args.hii}")
+    hii_df = pd.read_csv(args.hii)
+    if lon_col not in hii_df.columns or lat_col not in hii_df.columns:
+        avail = [c.split("_", 1)[1].rsplit(" ", 1)[0]
+                 for c in hii_df.columns if c.startswith("lon_")]
+        sys.exit(
+            f"ERROR: Survey '{args.survey}' not found in {args.hii}. "
+            f"Available surveys: {avail}"
+        )
+
+    # Map (CO26 lon, CO26 lat) → (survey lon, survey lat) for each HII source
+    co26_lon_col = "lon_CO26 [deg]"
+    co26_lat_col = "lat_CO26 [deg]"
+    survey_coords = {}
+    for _, hrow in hii_df.iterrows():
+        co26_lon = hrow.get(co26_lon_col)
+        co26_lat = hrow.get(co26_lat_col)
+        srv_lon = hrow.get(lon_col)
+        srv_lat = hrow.get(lat_col)
+        if pd.notna(co26_lon) and pd.notna(co26_lat) and pd.notna(srv_lon) and pd.notna(srv_lat):
+            survey_coords[(round(float(co26_lon), 6), round(float(co26_lat), 6))] = (
+                float(srv_lon), float(srv_lat)
+            )
+    log.info("Loaded %s coordinates for %d sources from %s",
+             args.survey, len(survey_coords), args.hii)
+
+    # Build a lookup: field_name → list of (co26_glon, co26_glat) sources
+    # CO26 coords are used for the initial fit guess (map is centred on CO26)
     field_sources = {}
     for _, row in summary.iterrows():
         field = row["matched_field"]
@@ -587,9 +632,23 @@ def main():
 
         # Fit each source expected in this field
         for source_glon, source_glat in field_sources[field_name]:
+            # source_glon/glat are CO26 coords (used for fit initial guess)
+            # Look up the chosen survey coords for the predicted position
+            key = (round(source_glon, 6), round(source_glat, 6))
+            if key in survey_coords:
+                pred_glon, pred_glat = survey_coords[key]
+            else:
+                log.warning(
+                    "  No %s coordinates for source (l=%.4f, b=%.4f) — skipping.",
+                    args.survey, source_glon, source_glat,
+                )
+                continue
+
             log.info(
-                "  Fitting source at (l=%.4f, b=%.4f) in %s",
-                source_glon, source_glat, basename,
+                "  Fitting source at CO26 (l=%.4f, b=%.4f), "
+                "predicted from %s (l=%.4f, b=%.4f) in %s",
+                source_glon, source_glat,
+                args.survey, pred_glon, pred_glat, basename,
             )
 
             fit = fit_source_in_map(
@@ -605,8 +664,8 @@ def main():
                 log.warning("  Fit failed — skipping this source.")
                 continue
 
-            # Predicted source az/el from catalogue (l,b) → RA/Dec → az/el
-            cat_ra, cat_dec = galactic_to_radec(source_glon, source_glat)
+            # Predicted source az/el from survey (l,b) → RA/Dec → az/el
+            cat_ra, cat_dec = galactic_to_radec(pred_glon, pred_glat)
             if mean_lst is not None:
                 pred_az, pred_el = radec_to_azel_from_lst(cat_ra, cat_dec, mean_lst)
             else:
@@ -650,9 +709,12 @@ def main():
             row = {
                 "field": field_name,
                 "group": epoch_str,
+                "survey": args.survey,
                 "fits_file": basename,
                 "source_glon": source_glon,
                 "source_glat": source_glat,
+                "pred_glon": pred_glon,
+                "pred_glat": pred_glat,
                 "fit_glon": fit["fit_glon"],
                 "fit_glat": fit["fit_glat"],
                 "cat_ra": cat_ra,
@@ -711,7 +773,7 @@ def main():
         print("POINTING OFFSET SUMMARY (arcmin)")
         print("=" * 90)
         cols = [
-            "field", "group", "source_glon", "source_glat",
+            "field", "group", "survey", "source_glon", "source_glat",
             "amplitude",
             "mean_lst", "pred_az", "pred_el",
             "delta_az_arcmin", "err_az_arcmin",
