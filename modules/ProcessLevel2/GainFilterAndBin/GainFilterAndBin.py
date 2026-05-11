@@ -157,26 +157,31 @@ class GainFilterAndBin(BaseCOMAPModule):
         
         """
         median_offsets = []
-        # Subtract the best fit atmosphere model 
+        in_scan = np.zeros(data.shape[-1], dtype=bool)
+        # Subtract the per-scan median and best-fit atmosphere model. Anything
+        # outside a scan window is forced to zero so it cannot leak into the
+        # binned output.
         for iscan, (scan_start, scan_end) in enumerate(scan_edges):
+            in_scan[scan_start:scan_end] = True
             median_offsets.append(np.nanmedian(data[...,scan_start:scan_end],axis=-1))
             mdl_atmos = atmos_offsets[...,iscan,np.newaxis] +\
                 atmos_tau[...,iscan,np.newaxis]/np.sin(elevation[np.newaxis,np.newaxis,scan_start:scan_end])
-            data[...,scan_start:scan_end] -= (atmos_offsets[...,iscan,np.newaxis] +\
-                                                atmos_tau[...,iscan,np.newaxis]/np.sin(elevation[np.newaxis,np.newaxis,scan_start:scan_end]))
-        
-        # Apply the gain filter 
+            data[...,scan_start:scan_end] -= mdl_atmos
+            data[...,scan_start:scan_end] -= median_offsets[iscan][...,np.newaxis]
+        data[..., ~in_scan] = 0.0
+
+        # Apply the gain filter
         data_filtered = np.zeros_like(data)
         weights = 1./auto_rms**2
 
-        for iscan,(scan_start, scan_end) in enumerate(scan_edges): 
-            data_filtered[...,scan_start:scan_end], mask, gain_temp = self.gain_filter(data[...,scan_start:scan_end], 
-                                                                        system_temperature, 
+        for iscan,(scan_start, scan_end) in enumerate(scan_edges):
+            data_filtered[...,scan_start:scan_end], mask, gain_temp = self.gain_filter(data[...,scan_start:scan_end],
+                                                                        system_temperature,
                                                                         median_offsets[iscan],
                                                                         feed,
                                                                         sigma_red=sigma_red,
                                                                         alpha=alpha)
-            weights[~mask] = 0.0 
+            weights[~mask] = 0.0
         # Average the data in frequency 
         # n_bands, n_channels, n_tod = data.shape
         # ones = np.ones((n_bands, self.n_freq_bin, n_channels//self.n_freq_bin, 1))
