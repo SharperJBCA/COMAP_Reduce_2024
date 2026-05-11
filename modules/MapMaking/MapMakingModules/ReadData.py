@@ -534,12 +534,12 @@ class Level2DataReader:
             scan_edges = f["level2/scan_edges"][...]
             feeds = f["spectrometer/feeds"][:-1]
             # early skip via feed 1 high sigma_red
-            if not "level2_noise_stats/binned_filtered_data/sigma_red" in f:
-                logging.info(f'!!WARNING!!: {file} has no sigma red! Including without stat check!')
-            else:
-                s1 = f["level2_noise_stats/binned_filtered_data/sigma_red"][0, self.band, self.channel, :]
-                if np.any(s1 > 5.0):
-                    return 0, 0
+            # if not "level2_noise_stats/binned_filtered_data/sigma_red" in f:
+            #     logging.info(f'!!WARNING!!: {file} has no sigma red! Including without stat check!')
+            # else:
+            #     s1 = f["level2_noise_stats/binned_filtered_data/sigma_red"][0, self.band, self.channel, :]
+            #     if np.any(s1 > 5.0):
+            #         return 0, 0
             for feed in feeds:
                 if feed not in feeds_keep:
                     continue

@@ -14,6 +14,20 @@ if str(REPO_ROOT) not in sys.path:
 
 from modules.SQLModule.SQLModule import COMAPData, db
 
+def cmd_query_obsid(obsid: int) -> None: 
+    db._connect()
+    rows = (
+        db.session.query(COMAPData.obsid, COMAPData.level1_path, COMAPData.level2_path)
+        .filter(
+            (COMAPData.obsid == obsid)
+        )
+        .order_by(COMAPData.obsid)
+        .all()
+    )
+    db._disconnect()
+
+    print(tabulate(rows, headers=["obsid", "level1_path", "level2_path"], tablefmt="github"))
+
 
 def cmd_summary(show_examples: int) -> None:
     db._connect()
@@ -144,6 +158,9 @@ def main() -> None:
     field_status.add_argument("--exact", action="store_true", help="(deprecated, now the default) Match source exactly")
     field_status.add_argument("--include-skydips", action="store_true", help="Include SkyDip observations in the count (excluded by default)")
 
+    query_obsid = subparsers.add_parser("query-obsid", help="Get info for a single obsid")
+    query_obsid.add_argument('obsid', help="obsid to search for")
+
     args = parser.parse_args()
 
     db.connect(args.database)
@@ -156,6 +173,8 @@ def main() -> None:
         cmd_path_search(args.substring, args.limit)
     elif args.command == "field-status":
         cmd_field_status(args.field_name, exact=args.exact, include_skydips=args.include_skydips)
+    elif args.command == "query-obsid":
+        cmd_query_obsid(args.obsid)
 
 
 if __name__ == "__main__":

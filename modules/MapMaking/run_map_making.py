@@ -59,8 +59,8 @@ def load_data(parameters):
     db.disconnect()
     band, channel = np.unravel_index(parameters['band'], (4,2))
 
-    print('CREATING DYNAMIC WCS')
     if parameters['wcs_def'] == 'dynamic':
+        print('CREATING DYNAMIC WCS')
         feeds_keep = [int(f) for f in parameters['feeds']] if parameters['feeds'] else list(range(1, 20))
         local_data.setup_dynamic_wcs(
             list(file_list),
