@@ -184,7 +184,8 @@ class GainFilterAndBin(BaseCOMAPModule):
                                                                         median_offsets[iscan],
                                                                         feed,
                                                                         sigma_red=sigma_red,
-                                                                        alpha=alpha)
+                                                                        alpha=alpha,
+                                                                        elevation=elevation[scan_start:scan_end])
             weights[~mask] = 0.0
         # Average the data in frequency 
         # n_bands, n_channels, n_tod = data.shape
