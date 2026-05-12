@@ -182,12 +182,14 @@ class GainFilterBase:
             #logging.info(f'Gain filter shape {g.shape}')
             return g[-1], mask # dG/G is in the 3rd template
         
-    def PS_1f(sigma0, sigma_red, alpha, n_samples, sample_rate=50.0, k_ref=1.0):
-        """"""
+    @staticmethod
+    def PS_1f(sigma_red, alpha, n_samples, sample_rate=50.0, k_ref=0.1):
+        """1/f prior PSD. k_ref must match the value used to fit sigma_red in
+        NoiseStats (0.1 Hz)."""
         freqs = np.fft.rfftfreq(n_samples, d=1/sample_rate)
-        PS = np.zeros_like(freqs) 
-        PS[1:] = (sigma_red)**2 * np.abs(freqs[1:]/k_ref)**alpha 
-        return PS 
+        PS = np.zeros_like(freqs)
+        PS[1:] = (sigma_red)**2 * np.abs(freqs[1:]/k_ref)**alpha
+        return PS
     
     def remove_edges(self, data, system_temperature):
         # Remove edge frequencies and the bad middle frequency
@@ -226,9 +228,9 @@ class GainFilterWithPrior(GainFilterBase):
         gains = []
         for iband in range(normed_data.shape[0]):
             gain_solution = np.zeros(n_tod)
-            gain_temp,mbest, gain_templates, sys_templates = self.gain_subtract_fit_with_prior(normed_data[iband:iband+1], 
+            gain_temp,mbest, gain_templates, sys_templates = self.gain_subtract_fit_with_prior(normed_data[iband:iband+1],
                                                           system_temperature[iband:iband+1],
-                                                            sigma_red, alpha*2)
+                                                            sigma_red, alpha)
             
             gain_temp = gain_temp[0]
             if gain_temp.shape[0] == n_tod:
