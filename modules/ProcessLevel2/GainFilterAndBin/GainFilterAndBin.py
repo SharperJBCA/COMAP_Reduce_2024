@@ -131,16 +131,17 @@ class GainFilterAndBin(BaseCOMAPModule):
         median_system_temperature = np.nanmedian(system_temperature)
         mask = system_temperature > (median_system_temperature + self.system_temperature_cutoff)
 
-    def process_data(self, data : np.ndarray, 
-                     frequencies : np.ndarray, 
-                     system_temperature : np.ndarray, 
-                     atmos_offsets : np.ndarray, 
-                     atmos_tau : np.ndarray, 
+    def process_data(self, data : np.ndarray,
+                     frequencies : np.ndarray,
+                     system_temperature : np.ndarray,
+                     atmos_offsets : np.ndarray,
+                     atmos_tau : np.ndarray,
                      elevation : np.ndarray,
                     scan_edges : np.ndarray,
                     auto_rms : np.ndarray,
                     feed : int,
-                    sigma_red, alpha) -> tuple:
+                    sigma_red, alpha,
+                    azimuth : np.ndarray = None) -> tuple:
         """
         Expects vane calibrated data and auto_rms values 
 
@@ -179,13 +180,15 @@ class GainFilterAndBin(BaseCOMAPModule):
         weights = 1./auto_rms**2
 
         for iscan,(scan_start, scan_end) in enumerate(scan_edges):
+            az_slice = None if azimuth is None else azimuth[scan_start:scan_end]
             data_filtered[...,scan_start:scan_end], mask, gain_temp = self.gain_filter(data[...,scan_start:scan_end],
                                                                         system_temperature,
                                                                         median_offsets[iscan],
                                                                         feed,
                                                                         sigma_red=sigma_red,
                                                                         alpha=alpha,
-                                                                        elevation=elevation[scan_start:scan_end])
+                                                                        elevation=elevation[scan_start:scan_end],
+                                                                        azimuth=az_slice)
             weights[~mask] = 0.0
         # Average the data in frequency 
         # n_bands, n_channels, n_tod = data.shape
@@ -241,19 +244,24 @@ class GainFilterAndBin(BaseCOMAPModule):
                         elevation = np.radians(lvl2['spectrometer/pixel_pointing/pixel_el'][ifeed,...])
                     except KeyError:
                         raise BadCOMAPFile(file_info.obsid, 'Elevation not found in level 2 file')
-                    
-                    # Then bin the data 
-                    binned_data[feed-1],binned_filtered_data[feed-1],central_freqs[feed-1], bandwidths[feed-1] = self.process_data(data, 
-                                                                                                        frequencies, 
-                                                                                                        system_temperature, 
-                                                                                                        atmos_offsets, 
-                                                                                                        atmos_tau, 
+                    try:
+                        azimuth = lvl2['spectrometer/pixel_pointing/pixel_az'][ifeed,...]
+                    except KeyError:
+                        azimuth = None
+
+                    # Then bin the data
+                    binned_data[feed-1],binned_filtered_data[feed-1],central_freqs[feed-1], bandwidths[feed-1] = self.process_data(data,
+                                                                                                        frequencies,
+                                                                                                        system_temperature,
+                                                                                                        atmos_offsets,
+                                                                                                        atmos_tau,
                                                                                                         elevation,
                                                                                                         scan_edges,
                                                                                                         auto_rms,
                                                                                                         feed,
                                                                                                         sigma_red,
-                                                                                                        alpha)
+                                                                                                        alpha,
+                                                                                                        azimuth=azimuth)
 
 
                      

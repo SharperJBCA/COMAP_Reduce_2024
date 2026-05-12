@@ -1,4 +1,4 @@
-import numpy as np 
+import numpy as np
 from scipy.linalg import solve
 
 from modules.utils import mean_filter, median_filter
@@ -6,7 +6,31 @@ from multiprocessing import Pool
 import numpy as np
 from scipy.optimize import minimize
 from modules.pipeline_control.Pipeline import RetryH5PY
-import logging 
+import logging
+
+
+def build_atmos_templates(elevation=None, azimuth=None):
+    """Build the (K, ntod) matrix of fixed-shape systematics templates that
+    are jointly fit with the gain. Each row has its mean removed (DC is
+    projected out via the Tsys templates already). Returns None if neither
+    input is supplied.
+
+    elevation : radians (matches the existing convention in process_data).
+    azimuth   : degrees -- circular mean is removed with proper 0/360 wrap.
+    """
+    tmpls = []
+    if elevation is not None and np.all(np.isfinite(elevation)):
+        airmass = 1.0 / np.sin(elevation)
+        tmpls.append(airmass - np.mean(airmass))
+    if azimuth is not None and np.all(np.isfinite(azimuth)):
+        az_rad = np.radians(azimuth)
+        mean_dir = np.arctan2(np.mean(np.sin(az_rad)),
+                              np.mean(np.cos(az_rad)))
+        # wrap (az - circular_mean) into [-pi, pi]
+        delta_rad = np.angle(np.exp(1j * (az_rad - mean_dir)))
+        delta = np.degrees(delta_rad)
+        tmpls.append(delta - np.mean(delta))
+    return np.array(tmpls) if tmpls else None
 
 def solve_timepoint(args):
     """
@@ -46,7 +70,10 @@ class GainFilterBase:
     def __call__(self, data : np.ndarray,
                 system_temperature : np.ndarray,
                 median_offsets : np.ndarray,
-                feed : int, elevation : np.ndarray = None, **kwargs) -> np.ndarray:
+                feed : int,
+                elevation : np.ndarray = None,
+                azimuth : np.ndarray = None,
+                **kwargs) -> np.ndarray:
 
         normed_data = data/median_offsets[...,np.newaxis]
         normed_data -= np.nanmean(normed_data,axis=-1, keepdims=True)
@@ -58,19 +85,21 @@ class GainFilterBase:
         if gain_temp.shape[0] == n_tod:
             gain_solution[...] = gain_temp
 
-        # If an elevation track is supplied, identify a residual atmosphere
-        # component in the gain solution (a piece with the 1/sin(El) airmass
-        # shape) and split it off, so the airmass-shaped variation is removed
-        # from the data without being attributed to instrumental gain.
+        # If pointing tracks are supplied, identify systematics in the gain
+        # solution that share fixed shapes with airmass (1/sin El) and an
+        # azimuth gradient (delta_az with 0/360 wrap), split them off so they
+        # are not attributed to instrumental gain.
         atmos_solution = np.zeros(n_tod)
-        if elevation is not None:
-            airmass = 1.0 / np.sin(elevation)
-            airmass = airmass - np.mean(airmass)
-            denom = float(np.dot(airmass, airmass))
-            if denom > 0:
-                b = float(np.dot(gain_solution, airmass)) / denom
-                atmos_solution = b * airmass
+        T_atm = build_atmos_templates(elevation=elevation, azimuth=azimuth)
+        if T_atm is not None and T_atm.shape[1] == n_tod:
+            M = T_atm @ T_atm.T
+            r = T_atm @ gain_solution
+            try:
+                b = np.linalg.solve(M, r)
+                atmos_solution = b @ T_atm
                 gain_solution = gain_solution - atmos_solution
+            except np.linalg.LinAlgError:
+                pass
 
         # Rescale both components back to data units and subtract.
         total = (gain_solution + atmos_solution)[np.newaxis, np.newaxis, :] * median_offsets[...,np.newaxis]
@@ -224,7 +253,8 @@ class GainFilterWithPrior(GainFilterBase):
                 feed : int,
                 alpha=-1,
                 sigma_red=0.5,
-                elevation : np.ndarray = None) -> np.ndarray:
+                elevation : np.ndarray = None,
+                azimuth : np.ndarray = None) -> np.ndarray:
 
         normed_data = data/median_offsets[...,np.newaxis]
         normed_data -= np.nanmean(normed_data,axis=-1, keepdims=True)
@@ -235,6 +265,7 @@ class GainFilterWithPrior(GainFilterBase):
         residual = np.zeros_like(normed_data)
         mask = np.zeros(median_offsets.shape, dtype=bool)
         gains = []
+        atmos_templates = build_atmos_templates(elevation=elevation, azimuth=azimuth)
         for iband in range(normed_data.shape[0]):
             gain_solution = np.zeros(n_tod)
             atmos_solution = np.zeros(n_tod)
@@ -242,7 +273,7 @@ class GainFilterWithPrior(GainFilterBase):
                 normed_data[iband:iband+1],
                 system_temperature[iband:iband+1],
                 sigma_red, alpha,
-                elevation=elevation)
+                atmos_templates=atmos_templates)
 
             gain_temp = gain_temp[0]
             if gain_temp.shape[0] == n_tod:
@@ -269,12 +300,13 @@ class GainFilterWithPrior(GainFilterBase):
         # sys.exit()
         return residual, mask, gains
 
-    def gain_subtract_fit_with_prior(self, data_normed : np.ndarray, system_temperature : np.ndarray, sigma_red : float, alpha : float, elevation : np.ndarray = None, return_all : bool = False, sample_rate : float = 50.0) -> np.ndarray:
+    def gain_subtract_fit_with_prior(self, data_normed : np.ndarray, system_temperature : np.ndarray, sigma_red : float, alpha : float, atmos_templates : np.ndarray = None, return_all : bool = False, sample_rate : float = 50.0) -> np.ndarray:
         """
-        Gain subtraction with the 1/f noise prior. If an elevation track is
-        passed, also jointly fits an atmosphere component with fixed time shape
-        1/sin(El) and one scalar amplitude, removed from the gain solution
-        (and additionally returned for separate subtraction).
+        Gain subtraction with the 1/f noise prior. If atmos_templates is
+        passed (shape (K, ntod), one row per fixed-shape systematic, each
+        already mean-removed) the K scalar amplitudes are jointly fit with
+        the gain time series and split off into the returned atmosphere
+        track.
         """
 
         n_bands, nfreqs, ntod = data_normed.shape
@@ -310,18 +342,17 @@ class GainFilterWithPrior(GainFilterBase):
                            np.inf)
 
         atmos_amplitude = None
-        if elevation is not None and np.all(np.isfinite(elevation)) and z_scalar > 0:
-            # Joint MAP fit of gain (1/f prior) and a single airmass-shaped
-            # atmosphere amplitude (flat prior). Derivation: the atmosphere
-            # coefficient b is determined by the data component that the gain
-            # filter does NOT absorb -- weighted by P_high(f), the "leak" of
-            # the prior past the Wiener filter.
-            airmass = 1.0 / np.sin(elevation)
-            airmass = airmass - np.mean(airmass)
-            a_ft = np.fft.rfft(airmass)
-            n_fft = a_ft.size
+        if (atmos_templates is not None
+                and atmos_templates.shape[-1] == ntod
+                and z_scalar > 0):
+            # Joint MAP fit of gain (1/f prior) and K systematics templates
+            # (flat priors). Each template is one row of atmos_templates, with
+            # a single scalar amplitude. The K-by-K normal equations weight the
+            # template inner products by P_high(f) = (1/cov) / (z + 1/cov),
+            # the "leak" of the prior past the Wiener filter.
+            T_ft = np.fft.rfft(atmos_templates, axis=-1)  # (K, n_fft)
+            n_fft = T_ft.shape[-1]
 
-            # Parseval weights for one-sided FFT of real signal.
             wts = np.full(n_fft, 2.0)
             wts[0] = 1.0
             if ntod % 2 == 0:
@@ -329,13 +360,18 @@ class GainFilterWithPrior(GainFilterBase):
 
             P_high = np.where(np.isinf(inv_cov), 1.0,
                               inv_cov / (z_scalar + inv_cov))
+            weighted = wts * P_high  # (n_fft,)
 
-            num = float(np.sum(wts * np.real(np.conj(a_ft) * RHS[0]) * P_high)) / z_scalar
-            den = float(np.sum(wts * np.abs(a_ft)**2 * P_high))
-            b = num / den if den > 0 else 0.0
-            atmos_amplitude = b * airmass
+            M = np.real(np.einsum('kf,jf,f->kj', np.conj(T_ft), T_ft, weighted))
+            r = np.real(np.einsum('kf,f,f->k', np.conj(T_ft), RHS[0], weighted)) / z_scalar
 
-            RHS_g = RHS - z_scalar * b * a_ft[np.newaxis, :]
+            try:
+                b = np.linalg.solve(M, r)
+                atmos_amplitude = b @ atmos_templates                # (ntod,)
+                b_T_ft = b @ T_ft                                    # (n_fft,)
+                RHS_g = RHS - z_scalar * b_T_ft[np.newaxis, :]
+            except np.linalg.LinAlgError:
+                RHS_g = RHS
         else:
             RHS_g = RHS
 
