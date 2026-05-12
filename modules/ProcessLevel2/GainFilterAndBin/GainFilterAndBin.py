@@ -158,17 +158,20 @@ class GainFilterAndBin(BaseCOMAPModule):
         """
         median_offsets = []
         in_scan = np.zeros(data.shape[-1], dtype=bool)
-        # Subtract the best-fit atmosphere model per scan. The atmosphere fit
-        # already carries the DC baseline (atmos_offsets), so we don't subtract
-        # the per-scan median here -- it's only retained as a Tsys-like scale
-        # for normalisation inside the gain filter. Anything outside a scan
-        # window is forced to zero so it cannot leak into the binned output.
+        # median_offsets is the pre-atmosphere per-scan median, retained as a
+        # Tsys-like scale for normalisation inside the gain filter. After
+        # subtracting the atmosphere model, a second per-scan median
+        # (residual_offsets) is removed to zero out any leftover baseline.
+        # Anything outside a scan window is forced to zero so it cannot leak
+        # into the binned output.
         for iscan, (scan_start, scan_end) in enumerate(scan_edges):
             in_scan[scan_start:scan_end] = True
             median_offsets.append(np.nanmedian(data[...,scan_start:scan_end],axis=-1))
             mdl_atmos = atmos_offsets[...,iscan,np.newaxis] +\
                 atmos_tau[...,iscan,np.newaxis]/np.sin(elevation[np.newaxis,np.newaxis,scan_start:scan_end])
             data[...,scan_start:scan_end] -= mdl_atmos
+            residual_offset = np.nanmedian(data[...,scan_start:scan_end], axis=-1)
+            data[...,scan_start:scan_end] -= residual_offset[...,np.newaxis]
         data[..., ~in_scan] = 0.0
 
         # Apply the gain filter
