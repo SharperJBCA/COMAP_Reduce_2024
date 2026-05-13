@@ -393,12 +393,20 @@ class GainFilterWithPrior(GainFilterBase):
         gains = []
         atmos_templates, atmos_names = build_atmos_templates(elevation=elevation, azimuth=azimuth)
         for iband in range(normed_data.shape[0]):
+            # sigma_red from noise_priors is in K (fit on binned_data in K),
+            # but the gain time series this filter works in is dG/G (normed).
+            # Convert so the prior is in the same units as the signal it
+            # constrains; this is what makes 1/cov comparable to z and lets
+            # the Wiener filter suppress non-1/f-shaped signal (transients,
+            # source crossings) from being absorbed into the gain estimate.
+            typical_Tsys = float(np.nanmedian(median_offsets[iband]))
+            sigma_red_normed = sigma_red / typical_Tsys if typical_Tsys > 0 else sigma_red
             gain_solution = np.zeros(n_tod)
             atmos_solution = np.zeros(n_tod)
             gain_temp, mbest, gain_templates, sys_templates, atmos_temp, dbg = self.gain_subtract_fit_with_prior(
                 normed_data[iband:iband+1],
                 system_temperature[iband:iband+1],
-                sigma_red, alpha,
+                sigma_red_normed, alpha,
                 atmos_templates=atmos_templates)
 
             gain_temp = gain_temp[0]
