@@ -70,9 +70,95 @@ def solve_timepoint(args):
 
 class GainFilterBase:
 
-    def __init__(self, end_cut = 50):
+    def __init__(self, end_cut = 50, debug_dir = None):
         super().__init__()
         self.end_cut = end_cut
+        self.debug_dir = debug_dir
+        self._debug_call_count = 0
+
+    def _save_debug_plot(self, feed, iband, gain_solution, atmos_solution,
+                          atmos_templates, residual_band, P_high=None,
+                          ghat_ft=None, RHS_ft=None, n_tod=None, b_vec=None):
+        """Save a 2x2 diagnostic PNG. Called only when self.debug_dir is set."""
+        if not self.debug_dir:
+            return
+        import os
+        from matplotlib import pyplot as plt
+        os.makedirs(self.debug_dir, exist_ok=True)
+        n = self._debug_call_count
+
+        fig, axes = plt.subplots(2, 2, figsize=(14, 8))
+        title_b = '' if b_vec is None else (
+            ' | b=[' + ', '.join(f'{v:.3g}' for v in b_vec) + ']')
+        fig.suptitle(f'feed {feed:02d} band {iband} call {n}{title_b}', fontsize=11)
+
+        ax = axes[0, 0]
+        ax.plot(gain_solution, lw=0.5, color='C0', label=r'$\hat g(t)$')
+        if atmos_templates is not None and b_vec is not None:
+            labels = ['airmass', 'azimuth'][:atmos_templates.shape[0]]
+            for k, lab in enumerate(labels):
+                ax.plot(b_vec[k] * atmos_templates[k], lw=0.5,
+                        label=fr'$b_{{{lab}}} \tau_{{{lab}}}(t)$')
+        ax.plot(gain_solution + atmos_solution, lw=0.7, color='k', alpha=0.6,
+                label=r'$\hat s(t)$ total')
+        ax.set_xlabel('sample'); ax.set_ylabel('amplitude (dG/G units)')
+        ax.legend(fontsize=8); ax.set_title('Time-series decomposition')
+
+        ax = axes[0, 1]
+        if atmos_templates is not None:
+            for k, lab in enumerate(['airmass', 'azimuth'][:atmos_templates.shape[0]]):
+                t = atmos_templates[k]
+                tn = t / max(np.linalg.norm(t), 1e-30)
+                proj = residual_band @ tn   # (nfreqs,)
+                ax.plot(proj, lw=0.6, label=lab)
+            ax.axhline(0, color='k', lw=0.4)
+            ax.set_xlabel('channel'); ax.set_ylabel(r'$r_{\nu}\cdot\hat\tau$')
+            ax.legend(fontsize=8)
+            ax.set_title('Per-channel residual projection onto template')
+        else:
+            ax.text(0.5, 0.5, 'no atmos templates', ha='center', va='center')
+
+        ax = axes[1, 0]
+        if ghat_ft is not None and n_tod is not None:
+            freqs = np.fft.rfftfreq(n_tod, d=1/50.0)
+            ax.loglog(freqs[1:], np.abs(ghat_ft[1:]), lw=0.6, label=r'$|\hat g_{ft}(f)|$')
+            if RHS_ft is not None:
+                ax.loglog(freqs[1:], np.abs(RHS_ft[1:]), lw=0.6, alpha=0.6,
+                          label=r'$|R(f)|$')
+            if atmos_templates is not None:
+                for k, lab in enumerate(['airmass', 'azimuth'][:atmos_templates.shape[0]]):
+                    tf = np.fft.rfft(atmos_templates[k])
+                    ax.loglog(freqs[1:], np.abs(tf[1:]), lw=0.5, alpha=0.6,
+                              label=fr'$|\tilde\tau_{{{lab}}}|$')
+            ax.set_xlabel('frequency [Hz]'); ax.set_ylabel('amplitude')
+            ax.legend(fontsize=8); ax.set_title('Fourier amplitudes')
+        else:
+            ax.text(0.5, 0.5, '(GainFilterBase: no Fourier diagnostics)',
+                    ha='center', va='center')
+
+        ax = axes[1, 1]
+        if P_high is not None and n_tod is not None:
+            freqs = np.fft.rfftfreq(n_tod, d=1/50.0)
+            ax.semilogx(freqs[1:], P_high[1:], lw=0.7)
+            ax.set_xlabel('frequency [Hz]'); ax.set_ylabel(r'$P_{\rm high}(f)$')
+            ax.set_ylim(-0.05, 1.05); ax.set_title('Prior leakage weight')
+            ax.grid(True, which='both', alpha=0.3)
+            if atmos_templates is not None:
+                for k, lab in enumerate(['airmass', 'azimuth'][:atmos_templates.shape[0]]):
+                    tf = np.abs(np.fft.rfft(atmos_templates[k]))
+                    if tf[1:].max() > 0:
+                        peak = freqs[1:][np.argmax(tf[1:])]
+                        ax.axvline(peak, color=f'C{k}', ls='--', lw=0.6,
+                                   label=f'{lab} peak: {peak:.3g} Hz')
+                ax.legend(fontsize=8)
+        else:
+            ax.text(0.5, 0.5, '(no prior in use)', ha='center', va='center')
+
+        fig.tight_layout()
+        fname = os.path.join(self.debug_dir,
+                             f'feed{feed:02d}_band{iband}_call{n:03d}.png')
+        fig.savefig(fname, dpi=80)
+        plt.close(fig)
 
 
     def __call__(self, data : np.ndarray,
@@ -99,19 +185,31 @@ class GainFilterBase:
         # are not attributed to instrumental gain.
         atmos_solution = np.zeros(n_tod)
         T_atm = build_atmos_templates(elevation=elevation, azimuth=azimuth)
+        b_vec = None
         if T_atm is not None and T_atm.shape[1] == n_tod:
             M = T_atm @ T_atm.T
             r = T_atm @ gain_solution
             try:
-                b, *_ = np.linalg.lstsq(M, r, rcond=1e-8)
-                atmos_solution = b @ T_atm
+                b_vec, *_ = np.linalg.lstsq(M, r, rcond=1e-8)
+                atmos_solution = b_vec @ T_atm
                 gain_solution = gain_solution - atmos_solution
             except np.linalg.LinAlgError:
-                pass
+                b_vec = None
 
         # Rescale both components back to data units and subtract.
         total = (gain_solution + atmos_solution)[np.newaxis, np.newaxis, :] * median_offsets[...,np.newaxis]
         residual = data - total
+
+        if self.debug_dir:
+            for iband in range(residual.shape[0]):
+                self._save_debug_plot(feed=feed, iband=iband,
+                                       gain_solution=gain_solution,
+                                       atmos_solution=atmos_solution,
+                                       atmos_templates=T_atm,
+                                       residual_band=residual[iband],
+                                       n_tod=n_tod,
+                                       b_vec=b_vec)
+            self._debug_call_count += 1
 
         return residual, mask, gain_solution
 
@@ -249,11 +347,11 @@ class GainFilterBase:
 
 class GainFilterWithPrior(GainFilterBase):
 
-    def __init__(self, end_cut = 100, noise_prior_path='ancillary_data/noise_priors/noise_priors.npy'):
-        super().__init__()
+    def __init__(self, end_cut = 100, noise_prior_path='ancillary_data/noise_priors/noise_priors.npy', debug_dir=None):
+        super().__init__(debug_dir=debug_dir)
         self.end_cut = end_cut
 
-        self.noise_priors = np.load(noise_prior_path, allow_pickle=True).flatten()[0] 
+        self.noise_priors = np.load(noise_prior_path, allow_pickle=True).flatten()[0]
 
     def __call__(self, data : np.ndarray,
                 system_temperature : np.ndarray,
@@ -277,7 +375,7 @@ class GainFilterWithPrior(GainFilterBase):
         for iband in range(normed_data.shape[0]):
             gain_solution = np.zeros(n_tod)
             atmos_solution = np.zeros(n_tod)
-            gain_temp, mbest, gain_templates, sys_templates, atmos_temp = self.gain_subtract_fit_with_prior(
+            gain_temp, mbest, gain_templates, sys_templates, atmos_temp, dbg = self.gain_subtract_fit_with_prior(
                 normed_data[iband:iband+1],
                 system_temperature[iband:iband+1],
                 sigma_red, alpha,
@@ -297,6 +395,20 @@ class GainFilterWithPrior(GainFilterBase):
             mask[iband] = np.sum(np.abs(residual[iband,:,:]),axis=1) > 0
             gains.append(gain_solution)
 
+            if self.debug_dir:
+                self._save_debug_plot(feed=feed, iband=iband,
+                                       gain_solution=gain_solution,
+                                       atmos_solution=atmos_solution,
+                                       atmos_templates=atmos_templates,
+                                       residual_band=residual[iband],
+                                       P_high=dbg['P_high'],
+                                       ghat_ft=dbg['a_best_fit_ft'],
+                                       RHS_ft=dbg['RHS_ft'],
+                                       n_tod=n_tod,
+                                       b_vec=dbg['b_vec'])
+
+        if self.debug_dir:
+            self._debug_call_count += 1
         gains = np.array(gains)
         # print(residual.shape,median_offsets.shape, np.nanmedian(median_offsets))
         # print(mbest.shape, gain_templates.shape, gain_temp.shape, sys_templates.shape)
@@ -350,6 +462,8 @@ class GainFilterWithPrior(GainFilterBase):
                            np.inf)
 
         atmos_amplitude = None
+        b_vec = None
+        P_high = None
         if (atmos_templates is not None
                 and atmos_templates.shape[-1] == ntod
                 and z_scalar > 0):
@@ -378,9 +492,9 @@ class GainFilterWithPrior(GainFilterBase):
             # solve would otherwise return huge values that destructively
             # cancel between the gain and atmos solutions.
             try:
-                b, *_ = np.linalg.lstsq(M, r, rcond=1e-8)
-                atmos_amplitude = b @ atmos_templates
-                b_T_ft = b @ T_ft
+                b_vec, *_ = np.linalg.lstsq(M, r, rcond=1e-8)
+                atmos_amplitude = b_vec @ atmos_templates
+                b_T_ft = b_vec @ T_ft
                 RHS_g = RHS - z_scalar * b_T_ft[np.newaxis, :]
             except np.linalg.LinAlgError:
                 RHS_g = RHS
@@ -392,4 +506,8 @@ class GainFilterWithPrior(GainFilterBase):
 
         m_best_fit = np.linalg.pinv(sys_templates.T.dot(sys_templates)).dot(sys_templates.T).dot(data_normed - gain_templates.dot(a_best_fit))
 
-        return a_best_fit, m_best_fit, gain_templates, sys_templates, atmos_amplitude
+        debug = {'a_best_fit_ft': a_best_fit_ft[0],
+                 'RHS_ft': RHS[0],
+                 'P_high': P_high,
+                 'b_vec': b_vec}
+        return a_best_fit, m_best_fit, gain_templates, sys_templates, atmos_amplitude, debug
