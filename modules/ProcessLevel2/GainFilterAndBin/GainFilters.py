@@ -367,9 +367,14 @@ class GainFilterBase:
 
 class GainFilterWithPrior(GainFilterBase):
 
-    def __init__(self, end_cut = 100, noise_prior_path='ancillary_data/noise_priors/noise_priors.npy', debug_dir=None):
+    def __init__(self, end_cut = 100, noise_prior_path='ancillary_data/noise_priors/noise_priors.npy', debug_dir=None, output_mode='residual'):
         super().__init__(debug_dir=debug_dir)
         self.end_cut = end_cut
+        # output_mode controls what is returned as the "filtered" TOD:
+        #   'residual'  -> data minus gain & atmosphere reconstruction (default)
+        #   'continuum' -> the m[0] time series (the (1/Tsys - mean) template
+        #                  amplitude) broadcast across channels, in K
+        self.output_mode = output_mode
 
         self.noise_priors = np.load(noise_prior_path, allow_pickle=True).flatten()[0]
 
@@ -422,6 +427,17 @@ class GainFilterWithPrior(GainFilterBase):
             residual[iband:iband+1] = data[iband:iband+1] - gain_templates * total[np.newaxis,:]
             mask[iband] = np.sum(np.abs(residual[iband,:,:]),axis=1) > 0
             gains.append(gain_solution)
+
+            if self.output_mode == 'continuum':
+                # mbest shape (2, ntod) -- the LS coefficients for
+                # [1/Tsys-mean, v/Tsys-mean] at each time, in K. Use m[0] as
+                # a single time series, broadcast over the band's channels,
+                # so the downstream binning sees this in place of the
+                # gain-subtracted residual.
+                continuum_K = mbest[0, :]
+                residual[iband:iband+1] = np.broadcast_to(
+                    continuum_K[np.newaxis, np.newaxis, :],
+                    residual[iband:iband+1].shape).copy()
 
             if self.debug_dir:
                 self._save_debug_plot(feed=feed, iband=iband,
