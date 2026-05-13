@@ -21,11 +21,17 @@ def build_atmos_templates(elevation=None, azimuth=None, min_relative_amplitude=1
 
     elevation : radians (matches the existing convention in process_data).
     azimuth   : degrees -- circular mean is removed with proper 0/360 wrap.
+
+    Returns (templates, names) where templates is (K, ntod) (or None) and
+    names is the list of surviving labels in row order. Names are kept in
+    sync with the surviving rows after the amplitude filter so that
+    diagnostics label things correctly.
     """
-    tmpls = []
+    tmpls, names = [], []
     if elevation is not None and np.all(np.isfinite(elevation)):
         airmass = 1.0 / np.sin(elevation)
         tmpls.append(airmass - np.mean(airmass))
+        names.append('airmass')
     if azimuth is not None and np.all(np.isfinite(azimuth)):
         az_rad = np.radians(azimuth)
         mean_dir = np.arctan2(np.mean(np.sin(az_rad)),
@@ -33,12 +39,14 @@ def build_atmos_templates(elevation=None, azimuth=None, min_relative_amplitude=1
         delta_rad = np.angle(np.exp(1j * (az_rad - mean_dir)))
         delta = np.degrees(delta_rad)
         tmpls.append(delta - np.mean(delta))
+        names.append('azimuth')
     if not tmpls:
-        return None
+        return None, []
     amps = np.array([np.ptp(t) for t in tmpls])
     keep = amps > min_relative_amplitude * amps.max()
     tmpls = [t for t, k in zip(tmpls, keep) if k]
-    return np.array(tmpls) if tmpls else None
+    names = [n for n, k in zip(names, keep) if k]
+    return (np.array(tmpls), names) if tmpls else (None, [])
 
 def solve_timepoint(args):
     """
@@ -78,7 +86,8 @@ class GainFilterBase:
 
     def _save_debug_plot(self, feed, iband, gain_solution, atmos_solution,
                           atmos_templates, residual_band, P_high=None,
-                          ghat_ft=None, RHS_ft=None, n_tod=None, b_vec=None):
+                          ghat_ft=None, RHS_ft=None, n_tod=None, b_vec=None,
+                          atmos_names=None):
         """Save a 2x2 diagnostic PNG. Called only when self.debug_dir is set."""
         if not self.debug_dir:
             return
@@ -95,7 +104,7 @@ class GainFilterBase:
         ax = axes[0, 0]
         ax.plot(gain_solution, lw=0.5, color='C0', label=r'$\hat g(t)$')
         if atmos_templates is not None and b_vec is not None:
-            labels = ['airmass', 'azimuth'][:atmos_templates.shape[0]]
+            labels = (atmos_names if atmos_names is not None else [f'tmpl{i}' for i in range(atmos_templates.shape[0])])
             for k, lab in enumerate(labels):
                 ax.plot(b_vec[k] * atmos_templates[k], lw=0.5,
                         label=fr'$b_{{{lab}}} \tau_{{{lab}}}(t)$')
@@ -106,7 +115,7 @@ class GainFilterBase:
 
         ax = axes[0, 1]
         if atmos_templates is not None:
-            for k, lab in enumerate(['airmass', 'azimuth'][:atmos_templates.shape[0]]):
+            for k, lab in enumerate((atmos_names if atmos_names is not None else [f'tmpl{i}' for i in range(atmos_templates.shape[0])])):
                 t = atmos_templates[k]
                 tn = t / max(np.linalg.norm(t), 1e-30)
                 proj = residual_band @ tn   # (nfreqs,)
@@ -126,7 +135,7 @@ class GainFilterBase:
                 ax.loglog(freqs[1:], np.abs(RHS_ft[1:]), lw=0.6, alpha=0.6,
                           label=r'$|R(f)|$')
             if atmos_templates is not None:
-                for k, lab in enumerate(['airmass', 'azimuth'][:atmos_templates.shape[0]]):
+                for k, lab in enumerate((atmos_names if atmos_names is not None else [f'tmpl{i}' for i in range(atmos_templates.shape[0])])):
                     tf = np.fft.rfft(atmos_templates[k])
                     ax.loglog(freqs[1:], np.abs(tf[1:]), lw=0.5, alpha=0.6,
                               label=fr'$|\tilde\tau_{{{lab}}}|$')
@@ -144,7 +153,7 @@ class GainFilterBase:
             ax.set_ylim(-0.05, 1.05); ax.set_title('Prior leakage weight')
             ax.grid(True, which='both', alpha=0.3)
             if atmos_templates is not None:
-                for k, lab in enumerate(['airmass', 'azimuth'][:atmos_templates.shape[0]]):
+                for k, lab in enumerate((atmos_names if atmos_names is not None else [f'tmpl{i}' for i in range(atmos_templates.shape[0])])):
                     tf = np.abs(np.fft.rfft(atmos_templates[k]))
                     if tf[1:].max() > 0:
                         peak = freqs[1:][np.argmax(tf[1:])]
@@ -184,7 +193,7 @@ class GainFilterBase:
         # azimuth gradient (delta_az with 0/360 wrap), split them off so they
         # are not attributed to instrumental gain.
         atmos_solution = np.zeros(n_tod)
-        T_atm = build_atmos_templates(elevation=elevation, azimuth=azimuth)
+        T_atm, atmos_names = build_atmos_templates(elevation=elevation, azimuth=azimuth)
         b_vec = None
         if T_atm is not None and T_atm.shape[1] == n_tod:
             M = T_atm @ T_atm.T
@@ -206,6 +215,7 @@ class GainFilterBase:
                                        gain_solution=gain_solution,
                                        atmos_solution=atmos_solution,
                                        atmos_templates=T_atm,
+                                       atmos_names=atmos_names,
                                        residual_band=residual[iband],
                                        n_tod=n_tod,
                                        b_vec=b_vec)
@@ -309,13 +319,23 @@ class GainFilterBase:
 
         mask = templates[..., 0] != 0
 
-        templates    = templates.reshape(  (n_bands * n_channels, n_templates)) 
+        templates    = templates.reshape(  (n_bands * n_channels, n_templates))
         data_reshape = data_normed.reshape((n_bands * n_channels, n_tod))
         if np.sum(bad_values) == bad_values.size:
             return np.zeros(n_tod), mask
 
-        not_zeros = np.sum(templates, axis=1) != 0  
+        not_zeros = np.sum(templates, axis=1) != 0
 
+        # Orthogonalise the Tsys columns (0, 1) against the gain column (2)
+        # over the good channels. See the analogous step in
+        # gain_subtract_fit_with_prior for the rationale: without this,
+        # nearly-constant Tsys makes 1/Tsys and the constant gain template
+        # degenerate, and the freq-flat amplitude gets split between m and g.
+        gain_col = templates[:, 2:3]                                     # (Nf, 1)
+        gain_norm_sq = float(gain_col.T @ gain_col)
+        if gain_norm_sq > 0:
+            proj = (templates[:, :2].T @ gain_col) / gain_norm_sq        # (2, 1)
+            templates[:, :2] = templates[:, :2] - gain_col @ proj.T      # (Nf, 2)
 
         g = self.solve_gain_solution(data_reshape[not_zeros], templates[not_zeros])
 
@@ -371,19 +391,14 @@ class GainFilterWithPrior(GainFilterBase):
         residual = np.zeros_like(normed_data)
         mask = np.zeros(median_offsets.shape, dtype=bool)
         gains = []
-        atmos_templates = build_atmos_templates(elevation=elevation, azimuth=azimuth)
+        atmos_templates, atmos_names = build_atmos_templates(elevation=elevation, azimuth=azimuth)
         for iband in range(normed_data.shape[0]):
-            # The noise prior was fit on binned_data in K, but the gain time
-            # series this filter recovers is in dG/G (normed) units. Convert
-            # sigma_red into normed units using the per-band typical Tsys.
-            typical_Tsys = float(np.nanmedian(median_offsets[iband]))
-            sigma_red_normed = sigma_red / typical_Tsys if typical_Tsys > 0 else sigma_red
             gain_solution = np.zeros(n_tod)
             atmos_solution = np.zeros(n_tod)
             gain_temp, mbest, gain_templates, sys_templates, atmos_temp, dbg = self.gain_subtract_fit_with_prior(
                 normed_data[iband:iband+1],
                 system_temperature[iband:iband+1],
-                sigma_red_normed, alpha,
+                sigma_red, alpha,
                 atmos_templates=atmos_templates)
 
             gain_temp = gain_temp[0]
@@ -405,6 +420,7 @@ class GainFilterWithPrior(GainFilterBase):
                                        gain_solution=gain_solution,
                                        atmos_solution=atmos_solution,
                                        atmos_templates=atmos_templates,
+                                       atmos_names=atmos_names,
                                        residual_band=residual[iband],
                                        P_high=dbg['P_high'],
                                        ghat_ft=dbg['a_best_fit_ft'],
@@ -451,6 +467,17 @@ class GainFilterWithPrior(GainFilterBase):
         sys_templates  = sys_templates.reshape((n_bands * nfreqs, 2))
         gain_templates = gain_templates.reshape((n_bands * nfreqs, 1))
         data_normed    = data_normed.reshape((n_bands * nfreqs, ntod))
+
+        # Orthogonalise the Tsys columns against the constant gain template
+        # over the good channels. Without this, when Tsys varies little across
+        # the band, [1/Tsys, v/Tsys] each carry a large constant component
+        # that is degenerate with the gain template -- and the freq-flat
+        # amplitude in the data ends up split between m and g rather than
+        # being attributed cleanly to the gain coefficient.
+        gain_norm_sq = float(gain_templates.T @ gain_templates)
+        if gain_norm_sq > 0:
+            proj = (sys_templates.T @ gain_templates) / gain_norm_sq   # (2, 1)
+            sys_templates = sys_templates - gain_templates @ proj.T    # (Nf, 2)
 
         cov = self.PS_1f(sigma_red, alpha, ntod, sample_rate=sample_rate)
 
