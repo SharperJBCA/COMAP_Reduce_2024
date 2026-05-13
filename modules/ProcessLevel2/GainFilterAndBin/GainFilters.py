@@ -373,12 +373,17 @@ class GainFilterWithPrior(GainFilterBase):
         gains = []
         atmos_templates = build_atmos_templates(elevation=elevation, azimuth=azimuth)
         for iband in range(normed_data.shape[0]):
+            # The noise prior was fit on binned_data in K, but the gain time
+            # series this filter recovers is in dG/G (normed) units. Convert
+            # sigma_red into normed units using the per-band typical Tsys.
+            typical_Tsys = float(np.nanmedian(median_offsets[iband]))
+            sigma_red_normed = sigma_red / typical_Tsys if typical_Tsys > 0 else sigma_red
             gain_solution = np.zeros(n_tod)
             atmos_solution = np.zeros(n_tod)
             gain_temp, mbest, gain_templates, sys_templates, atmos_temp, dbg = self.gain_subtract_fit_with_prior(
                 normed_data[iband:iband+1],
                 system_temperature[iband:iband+1],
-                sigma_red, alpha,
+                sigma_red_normed, alpha,
                 atmos_templates=atmos_templates)
 
             gain_temp = gain_temp[0]
