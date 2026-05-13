@@ -159,18 +159,21 @@ class GainFilterAndBin(BaseCOMAPModule):
         """
         median_offsets = []
         in_scan = np.zeros(data.shape[-1], dtype=bool)
-        # median_offsets is the pre-atmosphere per-scan median, retained as a
-        # Tsys-like scale for normalisation inside the gain filter. After
-        # subtracting the atmosphere model, a second per-scan median
-        # (residual_offsets) is removed to zero out any leftover baseline.
-        # Anything outside a scan window is forced to zero so it cannot leak
-        # into the binned output.
+        # Scans whose elevation range is below this threshold are treated as
+        # constant-elevation (CES): the atmosphere model collapses to a pure
+        # median in that limit (cf. Atmosphere.py el_change check) and the
+        # airmass template collapses to ~zero, so we skip both to avoid
+        # injecting noise into the joint fit.
+        flat_el_scans = np.zeros(len(scan_edges), dtype=bool)
         for iscan, (scan_start, scan_end) in enumerate(scan_edges):
             in_scan[scan_start:scan_end] = True
+            el_range_deg = np.degrees(np.ptp(elevation[scan_start:scan_end]))
+            flat_el_scans[iscan] = el_range_deg < 0.1
             median_offsets.append(np.nanmedian(data[...,scan_start:scan_end],axis=-1))
-            mdl_atmos = atmos_offsets[...,iscan,np.newaxis] +\
-                atmos_tau[...,iscan,np.newaxis]/np.sin(elevation[np.newaxis,np.newaxis,scan_start:scan_end])
-            data[...,scan_start:scan_end] -= mdl_atmos
+            if not flat_el_scans[iscan]:
+                mdl_atmos = atmos_offsets[...,iscan,np.newaxis] +\
+                    atmos_tau[...,iscan,np.newaxis]/np.sin(elevation[np.newaxis,np.newaxis,scan_start:scan_end])
+                data[...,scan_start:scan_end] -= mdl_atmos
             residual_offset = np.nanmedian(data[...,scan_start:scan_end], axis=-1)
             data[...,scan_start:scan_end] -= residual_offset[...,np.newaxis]
         data[..., ~in_scan] = 0.0
@@ -181,13 +184,16 @@ class GainFilterAndBin(BaseCOMAPModule):
 
         for iscan,(scan_start, scan_end) in enumerate(scan_edges):
             az_slice = None if azimuth is None else azimuth[scan_start:scan_end]
+            # For flat-elevation scans the airmass template is ~zero, so skip
+            # it; azimuth (if available) is still used.
+            el_slice = None if flat_el_scans[iscan] else elevation[scan_start:scan_end]
             data_filtered[...,scan_start:scan_end], mask, gain_temp = self.gain_filter(data[...,scan_start:scan_end],
                                                                         system_temperature,
                                                                         median_offsets[iscan],
                                                                         feed,
                                                                         sigma_red=sigma_red,
                                                                         alpha=alpha,
-                                                                        elevation=elevation[scan_start:scan_end],
+                                                                        elevation=el_slice,
                                                                         azimuth=az_slice)
             weights[~mask] = 0.0
         # Average the data in frequency 
