@@ -9,11 +9,15 @@ from modules.pipeline_control.Pipeline import RetryH5PY
 import logging
 
 
-def build_atmos_templates(elevation=None, azimuth=None):
+def build_atmos_templates(elevation=None, azimuth=None, min_relative_amplitude=1e-3):
     """Build the (K, ntod) matrix of fixed-shape systematics templates that
     are jointly fit with the gain. Each row has its mean removed (DC is
-    projected out via the Tsys templates already). Returns None if neither
-    input is supplied.
+    projected out via the Tsys templates already). Templates whose
+    peak-to-peak amplitude is below ``min_relative_amplitude`` times the
+    largest template's are dropped: on a constant-elevation scan the airmass
+    template collapses to ~constant and would make the joint MAP normal
+    equations rank-deficient, producing destructive cancellation between the
+    gain and atmosphere solutions.
 
     elevation : radians (matches the existing convention in process_data).
     azimuth   : degrees -- circular mean is removed with proper 0/360 wrap.
@@ -26,10 +30,14 @@ def build_atmos_templates(elevation=None, azimuth=None):
         az_rad = np.radians(azimuth)
         mean_dir = np.arctan2(np.mean(np.sin(az_rad)),
                               np.mean(np.cos(az_rad)))
-        # wrap (az - circular_mean) into [-pi, pi]
         delta_rad = np.angle(np.exp(1j * (az_rad - mean_dir)))
         delta = np.degrees(delta_rad)
         tmpls.append(delta - np.mean(delta))
+    if not tmpls:
+        return None
+    amps = np.array([np.ptp(t) for t in tmpls])
+    keep = amps > min_relative_amplitude * amps.max()
+    tmpls = [t for t, k in zip(tmpls, keep) if k]
     return np.array(tmpls) if tmpls else None
 
 def solve_timepoint(args):
@@ -95,7 +103,7 @@ class GainFilterBase:
             M = T_atm @ T_atm.T
             r = T_atm @ gain_solution
             try:
-                b = np.linalg.solve(M, r)
+                b, *_ = np.linalg.lstsq(M, r, rcond=1e-8)
                 atmos_solution = b @ T_atm
                 gain_solution = gain_solution - atmos_solution
             except np.linalg.LinAlgError:
@@ -365,10 +373,14 @@ class GainFilterWithPrior(GainFilterBase):
             M = np.real(np.einsum('kf,jf,f->kj', np.conj(T_ft), T_ft, weighted))
             r = np.real(np.einsum('kf,f,f->k', np.conj(T_ft), RHS[0], weighted)) / z_scalar
 
+            # lstsq with a relative rcond is robust to near-singular M
+            # (e.g. constant-elevation scans collapsing airmass to ~zero);
+            # solve would otherwise return huge values that destructively
+            # cancel between the gain and atmos solutions.
             try:
-                b = np.linalg.solve(M, r)
-                atmos_amplitude = b @ atmos_templates                # (ntod,)
-                b_T_ft = b @ T_ft                                    # (n_fft,)
+                b, *_ = np.linalg.lstsq(M, r, rcond=1e-8)
+                atmos_amplitude = b @ atmos_templates
+                b_T_ft = b @ T_ft
                 RHS_g = RHS - z_scalar * b_T_ft[np.newaxis, :]
             except np.linalg.LinAlgError:
                 RHS_g = RHS
